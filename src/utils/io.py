@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from src.config import DATA_DIR, RAW_DIR, INTERIM_DIR, FEATURES_DIR
 
 

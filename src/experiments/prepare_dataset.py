@@ -75,8 +75,18 @@ def build_datasets():
             ndre[..., None], coords, tile_size=TILE_SIZE
         )[..., 0]
 
+        valid_ratio = np.mean(~np.isnan(tiles), axis=(1, 2, 3))
+        keep = valid_ratio > 0.9  # require mostly clear pixels
+        tiles = tiles[keep]
+        ndre_tiles = ndre_tiles[keep]
+
+        if tiles.size == 0:
+            continue
+
+        tiles = np.nan_to_num(tiles, nan=0.0)
+
         X = tiles.reshape(tiles.shape[0], -1)
-        y = ndre_tiles.mean(axis=(1, 2))
+        y = np.nanmean(ndre_tiles, axis=(1, 2))
 
         if year in TRAIN_YEARS:
             X_train.append(X)
@@ -84,6 +94,9 @@ def build_datasets():
         else:
             X_test.append(X)
             y_test.append(y)
+
+    if not X_train or not X_test:
+        raise RuntimeError("No valid tiles found after masking; check AOI, clouds, or tile_size.")
 
     X_train = np.concatenate(X_train, axis=0)
     y_train = np.concatenate(y_train, axis=0)

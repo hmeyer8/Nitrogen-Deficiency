@@ -1,6 +1,6 @@
 import numpy as np
-from sklearn.metrics import r2_score, mean_squared_error
 from scipy.stats import pearsonr
+from sklearn.metrics import mean_squared_error, r2_score
 
 from src.config import INTERIM_DIR
 
@@ -11,8 +11,8 @@ def report_metrics(y_true, y_pred, label):
     r, _ = pearsonr(y_true, y_pred)
 
     print(f"\n[{label}]")
-    print(f"R²     = {r2:.4f}")
-    print(f"RMSE   = {rmse:.4f}")
+    print(f"R^2     = {r2:.4f}")
+    print(f"RMSE    = {rmse:.4f}")
     print(f"Pearson r = {r:.4f}")
 
 

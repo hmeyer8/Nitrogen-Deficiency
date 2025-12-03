@@ -1,22 +1,39 @@
 Project Startup Guide — Nitrogen Deficiency Feature Pipeline
 
-This document walks through the exact steps required to set up the project locally, download all raw data, prepare training and testing datasets, and run the full PCA vs Autoencoder comparison experiment.
+This document walks through the exact steps required to set up the project locally, download raw data, prepare training/testing datasets, and run the PCA vs Autoencoder experiment.
 
 Follow each phase in order. Do not skip steps.
 
 Phase 1 — Local Project Setup (One-Time)
 1. Navigate to the Project Directory
+
+macOS / Linux:
+```
 cd ~/dev/nitrogen-features
+```
+
+Windows PowerShell:
+```
+Set-Location ~/dev/nitrogen-features
+```
 
 2. Create and Activate a Virtual Environment
+
+macOS / Linux:
+```
 python3 -m venv .venv
 source .venv/bin/activate
+```
 
+Windows PowerShell:
+```
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
 
 You should now see:
 
 (.venv)
-
 
 Verify Python is active:
 
@@ -24,11 +41,13 @@ python --version
 
 3. Install Project Dependencies
 
-Upgrade pip and install all required packages:
+Upgrade pip and install all required packages (use the interpreter you just created so the right pip is invoked):
 
-pip install --upgrade pip
-pip install -r requirements.txt
-
+All platforms:
+```
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
 
 If any package fails to install, stop here and resolve it before continuing.
 
@@ -36,69 +55,153 @@ If any package fails to install, stop here and resolve it before continuing.
 
 Create the .env file:
 
+macOS / Linux:
+```
 nano .env
+```
 
+Windows PowerShell (choose any editor, e.g., Notepad):
+```
+notepad .env
+```
 
 Add your Copernicus Data Space credentials:
 
 CDSE_CLIENT_ID=your_real_client_id
 CDSE_CLIENT_SECRET=your_real_client_secret
 
+The Sentinel Hub client is already pointed to Copernicus Data Space defaults. Override URLs only if you are using a different CDSE gateway.
 
 Save the file and lock permissions:
 
+macOS / Linux:
+```
 chmod 600 .env
+```
 
+Windows PowerShell:
+```
+icacls .env /inheritance:r
+icacls .env /grant:r "${env:UserName}:(R,W)"
+```
+(These commands remove inherited permissions and grant the current user read/write access only.)
 
 Verify that the environment variables load correctly:
 
-python - <<EOF
+macOS / Linux:
+```
+python - <<'PY'
 import os
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(dotenv_path=".env")
 print(os.getenv("CDSE_CLIENT_ID") is not None)
-EOF
+PY
+```
 
+Windows PowerShell:
+```
+@'
+import os
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=".env")
+print(os.getenv("CDSE_CLIENT_ID") is not None)
+'@ | python
+```
 
 This must print:
 
 True
 
+Sanity check Copernicus auth with a tiny chip (fails fast on bad creds/scopes):
+```
+@'
+from datetime import date
+from sentinelhub import BBox, CRS, DataCollection, SentinelHubRequest, MimeType, bbox_to_dimensions
+from src.datasources.copernicus_client import get_sh_config
+
+bbox = BBox(bbox=(-100.0, 41.0, -99.99, 41.01), crs=CRS.WGS84)  # tiny AOI
+size = bbox_to_dimensions(bbox, resolution=60)
+req = SentinelHubRequest(
+    evalscript="return [B04,B08];",
+    input_data=[SentinelHubRequest.input_data(
+        data_collection=DataCollection.SENTINEL2_L2A,
+        time_interval=(date(2023,6,1), date(2023,6,15)),
+        mosaicking_order="leastCC"
+    )],
+    responses=[SentinelHubRequest.output_response("default", MimeType.TIFF)],
+    bbox=bbox,
+    size=size,
+    config=get_sh_config(),
+)
+arr = req.get_data()[0]
+print(arr.shape)
+'@ | python
+```
+Expect a small shape (bands, h, w). Any 401/403 means credentials/scopes are wrong; fix before proceeding.
+
 Phase 2 — Download Raw Data (Longest Step)
 5. Download the USDA Cropland Data Layer (CDL)
-python -m src.datasources.cdl_loader
-
+```
+python -m src.datasources.cdl_loader --years 2019 2020 2021 2022 2023 2024
+```
 
 This must create:
 
 data/raw/cdl/
 
-
 If the directory remains empty or an error occurs, stop and resolve it before continuing.
+
+Sanity check CDL presence:
+```
+python - <<'PY'
+from src.config import CDL_DIR
+years = [2019,2020,2021,2022,2023,2024]
+missing = [y for y in years if not (CDL_DIR / f"cdl_NE_{y}.tif").exists()]
+print("Missing:", missing)
+PY
+```
+`Missing: []` is required before moving on.
 
 6. Download Sentinel-2 Data by Year
 
 Run each command individually:
-
+```
 python -m src.datasources.sentinel_download --year 2019
 python -m src.datasources.sentinel_download --year 2020
 python -m src.datasources.sentinel_download --year 2021
 python -m src.datasources.sentinel_download --year 2022
 python -m src.datasources.sentinel_download --year 2023
 python -m src.datasources.sentinel_download --year 2024
-
+```
 
 Each command must produce:
 
 data/raw/sentinel/s2_ne_YYYY.npy
 
-
 Do not proceed until all six years exist.
+
+Sanity check Sentinel cubes:
+```
+python - <<'PY'
+import numpy as np
+from src.config import SENTINEL_DIR
+years = [2019,2020,2021,2022,2023,2024]
+for y in years:
+    p = SENTINEL_DIR / f"s2_ne_{y}.npy"
+    try:
+        arr = np.load(p)
+        print(y, p.exists(), arr.shape)
+    except Exception as e:
+        print(y, "ERR", e)
+PY
+```
+Each year should print `True (H, W, 11)`; fix any errors before continuing.
 
 Phase 3 — Build Training and Test Datasets
 7. Generate Leakage-Safe Train/Test Split
+```
 python -m src.experiments.prepare_dataset
-
+```
 
 Successful completion must print:
 
@@ -107,64 +210,87 @@ Train samples: XXXXX
 Test samples: XXXX
 Tile coordinate hash saved: XXXXX
 
-
 And create:
 
 data/interim/
-├── X_train.npy
-├── y_train.npy
-├── X_test.npy
-├── y_test.npy
-├── tile_coords.npy
-├── tile_hash.txt
+- X_train.npy
+- y_train.npy
+- X_test.npy
+- y_test.npy
+- tile_coords.npy
+- tile_hash.txt
+
+Sanity check tile counts (must be non-zero rows):
+```
+python - <<'PY'
+import numpy as np
+from src.config import INTERIM_DIR
+for name in ["X_train","y_train","X_test","y_test"]:
+    arr = np.load(INTERIM_DIR / f"{name}.npy")
+    print(name, arr.shape)
+PY
+```
+If any shape shows 0 rows, reduce cloud threshold or shrink AOI and rerun prepare_dataset.
 
 Phase 4 — Train PCA vs Autoencoder Features
 8. Train Feature Models
+```
 python -m src.experiments.train_pca_vs_ae
-
+```
 
 This must produce:
 
 data/interim/
-├── Zp_train.npy
-├── Za_train.npy
-├── y_pred_pca.npy
-├── y_pred_ae.npy
-
+- y_pred_pca.npy
+- y_pred_ae.npy
 
 If any error occurs here, review the stack trace before continuing.
 
+Sanity check predictions exist:
+```
+python - <<'PY'
+from src.config import INTERIM_DIR
+for name in ["y_pred_pca.npy","y_pred_ae.npy"]:
+    p = INTERIM_DIR / name
+    print(name, p.exists())
+PY
+```
+Both should be `True`.
+
 Phase 5 — Final Held-Out Evaluation (Most Important Result)
 9. Evaluate Performance on 2024 Only
+```
 python -m src.experiments.evaluate_heldout_year
-
+```
 
 Expected output format:
 
 [PCA / SVD]
-R² = 0.4321
+R^2 = 0.4321
 RMSE = 0.0874
 Pearson r = 0.6712
 
 [Autoencoder]
-R² = 0.5123
+R^2 = 0.5123
 RMSE = 0.0711
 Pearson r = 0.7488
-
 
 Interpretation:
 
 If Autoencoder > PCA → nitrogen stress is likely nonlinear
 
-If PCA ≥ Autoencoder → nitrogen stress is primarily linear–spectral
+If PCA ≈ Autoencoder → nitrogen stress is primarily linear–spectral
 
 These values represent the project’s final scientific conclusion.
 
 Phase 6 — Visual Verification (Strongly Recommended)
 10. Launch Jupyter for Visual Inspection
-pip install jupyterlab
-jupyter lab
 
+All platforms:
+```
+python -m pip install jupyterlab
+jupyter lab
+```
 
 Run the following notebooks in order:
 
@@ -198,4 +324,4 @@ Reproducible spatial sampling
 
 Portfolio and publication-grade experimental rigor
 
-At that point, this project is no longer a prototype—it is a complete scientific experiment.
+At that point, this project is no longer a prototype — it is a complete scientific experiment.

@@ -6,6 +6,7 @@ from sklearn.linear_model import Ridge
 from sklearn.metrics import r2_score, mean_squared_error
 from scipy.stats import pearsonr
 from sklearn.preprocessing import StandardScaler
+import torch
 
 from src.config import INTERIM_DIR
 from src.features.pca_svd import PCAFeatureExtractor
@@ -30,6 +31,7 @@ def run_experiment():
 
     input_dim = X_train.shape[1]
     latent_dim = 64
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     pca = PCAFeatureExtractor(n_components=latent_dim)
     Zp_train = pca.fit_transform(X_train)
@@ -42,11 +44,11 @@ def run_experiment():
 
     ae_model = train_autoencoder(
         X_train, input_dim=input_dim, latent_dim=latent_dim,
-        epochs=50, device="cuda"
+        epochs=50, device=device
     )
 
-    Za_train = encode_with_autoencoder(ae_model, X_train, device="cuda")
-    Za_test = encode_with_autoencoder(ae_model, X_test, device="cuda")
+    Za_train = encode_with_autoencoder(ae_model, X_train, device=device)
+    Za_test = encode_with_autoencoder(ae_model, X_test, device=device)
 
     reg_ae = Ridge(alpha=1.0)
     reg_ae.fit(Za_train, y_train)
