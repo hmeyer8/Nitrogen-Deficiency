@@ -1,0 +1,14 @@
+rasterio
+geopandas
+shapely
+numpy
+pandas
+xarray
+scipy
+scikit-learn
+torch
+torchvision
+tqdm
+python-dotenv
+requests
+sentinelhub         # client for Copernicus / Sentinel Hub APIs :contentReference[oaicite:1]{index=1}
