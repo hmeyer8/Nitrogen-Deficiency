@@ -1,17 +1,20 @@
 # src/datasources/sentinel_download.py
+
+import argparse
 from datetime import date
 from pathlib import Path
-
 import numpy as np
+
 from sentinelhub import (
     BBox, CRS, DataCollection, SentinelHubRequest,
     MimeType, bbox_to_dimensions
 )
 
 from src.datasources.copernicus_client import get_sh_config
+from src.geo.aoi_nebraska import NEBRASKA_BBOX
 from src.config import SENTINEL_DIR
 
-# S2 spectral + cloud mask
+
 EVALSCRIPT = """
 //VERSION=3
 function setup() {
@@ -37,16 +40,27 @@ function evaluatePixel(sample) {
 }
 """
 
-def download_sentinel_cube(aoi_gdf, time_interval, out_path: Path):
-    """Download a small cube for given AOI (GeoDataFrame) and time interval."""
+
+def download_sentinel_cube(year: int, verbose: bool = False):
+
     config = get_sh_config()
 
-    aoi = aoi_gdf.to_crs(epsg=4326).unary_union
-    minx, miny, maxx, maxy = aoi.bounds
+    minx, miny, maxx, maxy = NEBRASKA_BBOX
     bbox = BBox(bbox=(minx, miny, maxx, maxy), crs=CRS.WGS84)
 
-    resolution = 10  # meters
+    resolution = 10
     size_x, size_y = bbox_to_dimensions(bbox, resolution=resolution)
+
+    time_interval = (
+        date(year, 6, 1),
+        date(year, 8, 31)
+    )
+
+    if verbose:
+        print("Requesting Sentinel-2 L2A")
+        print("Year:", year)
+        print("AOI:", bbox)
+        print("Pixel size:", size_x, size_y)
 
     request = SentinelHubRequest(
         evalscript=EVALSCRIPT,
@@ -61,7 +75,27 @@ def download_sentinel_cube(aoi_gdf, time_interval, out_path: Path):
         config=config,
     )
 
-    data = request.get_data()[0]  # shape: H x W x 11
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    data = request.get_data()[0]
+
+    SENTINEL_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = SENTINEL_DIR / f"s2_ne_{year}.npy"
     np.save(out_path, data)
+
+    if verbose:
+        print("Saved:", out_path)
+        print("Array shape:", data.shape)
+
     return out_path
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--year", type=int, required=True)
+    parser.add_argument("--verbose", action="store_true")
+    args = parser.parse_args()
+
+    download_sentinel_cube(year=args.year, verbose=args.verbose)
+
+
+if __name__ == "__main__":
+    main()

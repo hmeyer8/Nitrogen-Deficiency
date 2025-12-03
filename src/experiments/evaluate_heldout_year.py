@@ -1,6 +1,29 @@
-"""Evaluate models on held-out year data."""
+import numpy as np
+from sklearn.metrics import r2_score, mean_squared_error
+from scipy.stats import pearsonr
+
+from src.config import INTERIM_DIR
 
 
-def evaluate(model, heldout_year: int):
-    """Placeholder evaluation routine."""
-    raise NotImplementedError
+def report_metrics(y_true, y_pred, label):
+    r2 = r2_score(y_true, y_pred)
+    rmse = mean_squared_error(y_true, y_pred, squared=False)
+    r, _ = pearsonr(y_true, y_pred)
+
+    print(f"\n[{label}]")
+    print(f"R²     = {r2:.4f}")
+    print(f"RMSE   = {rmse:.4f}")
+    print(f"Pearson r = {r:.4f}")
+
+
+def main():
+    y_test = np.load(INTERIM_DIR / "y_test.npy")
+    y_pred_pca = np.load(INTERIM_DIR / "y_pred_pca.npy")
+    y_pred_ae = np.load(INTERIM_DIR / "y_pred_ae.npy")
+
+    report_metrics(y_test, y_pred_pca, "PCA / SVD")
+    report_metrics(y_test, y_pred_ae, "Autoencoder")
+
+
+if __name__ == "__main__":
+    main()

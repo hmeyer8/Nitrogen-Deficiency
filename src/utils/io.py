@@ -1,5 +1,9 @@
-from src.config import FEATURE_DIR, INTERIM_DIR, SENTINEL_DIR, CDL_DIR
+from pathlib import Path
+
+from src.config import DATA_DIR, RAW_DIR, INTERIM_DIR, FEATURES_DIR
+
 
 def ensure_directories():
-    for d in [FEATURE_DIR, INTERIM_DIR, SENTINEL_DIR, CDL_DIR]:
+    """Ensure all required data directories exist."""
+    for d in [DATA_DIR, RAW_DIR, INTERIM_DIR, FEATURES_DIR]:
         d.mkdir(parents=True, exist_ok=True)

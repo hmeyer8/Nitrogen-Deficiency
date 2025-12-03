@@ -1,9 +1,11 @@
 # src/experiments/train_pca_vs_ae.py
+
 import numpy as np
 from pathlib import Path
 from sklearn.linear_model import Ridge
 from sklearn.metrics import r2_score, mean_squared_error
 from scipy.stats import pearsonr
+from sklearn.preprocessing import StandardScaler
 
 from src.config import INTERIM_DIR
 from src.features.pca_svd import PCAFeatureExtractor
@@ -18,14 +20,17 @@ def evaluate_regression(y_true, y_pred, label: str):
 
 def run_experiment():
     X_train = np.load(INTERIM_DIR / "X_train.npy")
-    y_train = np.load(INTERIM_DIR / "y_train_ndre_mean.npy")
+    y_train = np.load(INTERIM_DIR / "y_train.npy")
     X_test = np.load(INTERIM_DIR / "X_test.npy")
-    y_test = np.load(INTERIM_DIR / "y_test_ndre_mean.npy")
+    y_test = np.load(INTERIM_DIR / "y_test.npy")
+
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
 
     input_dim = X_train.shape[1]
     latent_dim = 64
 
-    # ---- PCA branch ----
     pca = PCAFeatureExtractor(n_components=latent_dim)
     Zp_train = pca.fit_transform(X_train)
     Zp_test = pca.transform(X_test)
@@ -35,11 +40,11 @@ def run_experiment():
     y_pred_pca = reg_pca.predict(Zp_test)
     metrics_pca = evaluate_regression(y_test, y_pred_pca, "PCA")
 
-    # ---- Autoencoder branch ----
     ae_model = train_autoencoder(
         X_train, input_dim=input_dim, latent_dim=latent_dim,
         epochs=50, device="cuda"
     )
+
     Za_train = encode_with_autoencoder(ae_model, X_train, device="cuda")
     Za_test = encode_with_autoencoder(ae_model, X_test, device="cuda")
 
@@ -48,7 +53,6 @@ def run_experiment():
     y_pred_ae = reg_ae.predict(Za_test)
     metrics_ae = evaluate_regression(y_test, y_pred_ae, "Autoencoder")
 
-    # Save for later plotting / report
     np.save(INTERIM_DIR / "y_pred_pca.npy", y_pred_pca)
     np.save(INTERIM_DIR / "y_pred_ae.npy", y_pred_ae)
 
