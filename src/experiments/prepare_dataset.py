@@ -18,6 +18,19 @@ TEST_YEAR = 2024
 TILE_SIZE = 32
 STRIDE = 32
 MAX_TILES = 2000
+STABLE_CORN_THRESHOLD = 0.6
+
+
+def resize_mask_to_cube(mask: np.ndarray, target_shape):
+    """
+    Simple nearest-neighbor resize of a mask to match the Sentinel cube grid.
+    Avoids importing extra deps; good enough for stable corn mask.
+    """
+    target_h, target_w = target_shape
+    src_h, src_w = mask.shape
+    y_idx = np.floor(np.linspace(0, src_h - 1, target_h)).astype(int)
+    x_idx = np.floor(np.linspace(0, src_w - 1, target_w)).astype(int)
+    return mask[y_idx[:, None], x_idx]
 
 
 def hash_coords(coords):
@@ -35,11 +48,18 @@ def build_datasets():
         aoi=NEBRASKA_BBOX
     )
 
+    sample_cube = np.load(SENTINEL_DIR / f"s2_ne_{TRAIN_YEARS[0]}.npy")
+    stable_mask_train = resize_mask_to_cube(
+        stable_mask_train,
+        target_shape=sample_cube.shape[:2]
+    )
+
     coords = generate_tile_coords(
         stable_mask_train,
         tile_size=TILE_SIZE,
         stride=STRIDE,
-        max_tiles=MAX_TILES
+        max_tiles=MAX_TILES,
+        stable_threshold=STABLE_CORN_THRESHOLD,
     )
 
     coords_hash = hash_coords(coords)

@@ -12,3 +12,6 @@ tqdm
 python-dotenv
 requests
 sentinelhub         # client for Copernicus / Sentinel Hub APIs :contentReference[oaicite:1]{index=1}
+matplotlib
+jupyterlab
+ipykernel

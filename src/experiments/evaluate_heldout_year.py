@@ -7,7 +7,10 @@ from src.config import INTERIM_DIR
 
 def report_metrics(y_true, y_pred, label):
     r2 = r2_score(y_true, y_pred)
-    rmse = mean_squared_error(y_true, y_pred, squared=False)
+    try:
+        rmse = mean_squared_error(y_true, y_pred, squared=False)
+    except TypeError:
+        rmse = mean_squared_error(y_true, y_pred) ** 0.5
     r, _ = pearsonr(y_true, y_pred)
 
     print(f"\n[{label}]")

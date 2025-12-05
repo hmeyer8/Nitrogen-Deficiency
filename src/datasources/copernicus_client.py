@@ -1,5 +1,5 @@
 # src/datasources/copernicus_client.py
-from sentinelhub import SHConfig
+from sentinelhub import DataCollection, SHConfig
 
 from src.config import (
     CDSE_AUTH_BASE_URL,
@@ -7,6 +7,12 @@ from src.config import (
     CDSE_CLIENT_ID,
     CDSE_CLIENT_SECRET,
     CDSE_TOKEN_URL,
+)
+
+
+CDSE_S2_L2A = DataCollection.SENTINEL2_L2A.define_from(
+    name="SENTINEL2_L2A_CDSE",
+    service_url=CDSE_BASE_URL,
 )
 
 

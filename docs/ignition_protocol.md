@@ -69,6 +69,7 @@ Add your Copernicus Data Space credentials:
 
 CDSE_CLIENT_ID=your_real_client_id
 CDSE_CLIENT_SECRET=your_real_client_secret
+GPU_ENABLED=false  # set to true to allow CUDA if available
 
 The Sentinel Hub client is already pointed to Copernicus Data Space defaults. Override URLs only if you are using a different CDSE gateway.
 
@@ -113,18 +114,45 @@ This must print:
 True
 
 Sanity check Copernicus auth with a tiny chip (fails fast on bad creds/scopes):
+macOS / Linux:
 ```
-@'
+python - <<'PY'
 from datetime import date
-from sentinelhub import BBox, CRS, DataCollection, SentinelHubRequest, MimeType, bbox_to_dimensions
-from src.datasources.copernicus_client import get_sh_config
+from sentinelhub import BBox, CRS, SentinelHubRequest, MimeType, bbox_to_dimensions
+from src.datasources.copernicus_client import get_sh_config, CDSE_S2_L2A
 
 bbox = BBox(bbox=(-100.0, 41.0, -99.99, 41.01), crs=CRS.WGS84)  # tiny AOI
 size = bbox_to_dimensions(bbox, resolution=60)
 req = SentinelHubRequest(
     evalscript="return [B04,B08];",
     input_data=[SentinelHubRequest.input_data(
-        data_collection=DataCollection.SENTINEL2_L2A,
+        data_collection=CDSE_S2_L2A,
+        time_interval=(date(2023,6,1), date(2023,6,15)),
+        mosaicking_order="leastCC"
+    )],
+    responses=[SentinelHubRequest.output_response("default", MimeType.TIFF)],
+    bbox=bbox,
+    size=size,
+    config=get_sh_config(),
+)
+arr = req.get_data()[0]
+print(arr.shape)
+PY
+```
+
+Windows PowerShell:
+```
+@'
+from datetime import date
+from sentinelhub import BBox, CRS, SentinelHubRequest, MimeType, bbox_to_dimensions
+from src.datasources.copernicus_client import get_sh_config, CDSE_S2_L2A
+
+bbox = BBox(bbox=(-100.0, 41.0, -99.99, 41.01), crs=CRS.WGS84)  # tiny AOI
+size = bbox_to_dimensions(bbox, resolution=60)
+req = SentinelHubRequest(
+    evalscript="return [B04,B08];",
+    input_data=[SentinelHubRequest.input_data(
+        data_collection=CDSE_S2_L2A,
         time_interval=(date(2023,6,1), date(2023,6,15)),
         mosaicking_order="leastCC"
     )],
@@ -299,6 +327,10 @@ notebooks/01_explore_cdl.ipynb
 notebooks/02_sample_tiles.ipynb
 
 notebooks/03_feature_visualization.ipynb
+
+If notebooks can’t import `src.*`, set the repo on your Python path before launching:
+- Terminal: `export PYTHONPATH=$PWD && jupyter lab`
+- Or add at the top of a notebook: `import sys, pathlib; sys.path.append(str(pathlib.Path.cwd()))`
 
 These verify:
 

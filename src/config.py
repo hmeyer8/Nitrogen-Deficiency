@@ -25,6 +25,12 @@ FEATURES_DIR = _resolve(os.getenv("FEATURES_DIR", DATA_DIR / "features"))
 CDSE_CLIENT_ID = os.getenv("CDSE_CLIENT_ID")
 CDSE_CLIENT_SECRET = os.getenv("CDSE_CLIENT_SECRET")
 
+def _to_bool(val: str) -> bool:
+    return str(val).lower() in {"1", "true", "yes", "on"}
+
+# Hardware / execution toggles
+GPU_ENABLED = _to_bool(os.getenv("GPU_ENABLED", "false"))
+
 # Copernicus Data Space endpoints (Sentinel Hub over CDSE)
 CDSE_BASE_URL = os.getenv("CDSE_BASE_URL", "https://sh.dataspace.copernicus.eu")
 CDSE_AUTH_BASE_URL = os.getenv(

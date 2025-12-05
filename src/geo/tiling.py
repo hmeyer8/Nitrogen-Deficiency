@@ -2,13 +2,13 @@
 import numpy as np
 
 
-def generate_tile_coords(mask: np.ndarray, tile_size=32, stride=32, max_tiles=None):
+def generate_tile_coords(mask: np.ndarray, tile_size=32, stride=32, max_tiles=None, stable_threshold=0.6):
     H, W = mask.shape
     coords = []
     for y in range(0, H - tile_size + 1, stride):
         for x in range(0, W - tile_size + 1, stride):
             tile = mask[y:y + tile_size, x:x + tile_size]
-            if tile.mean() > 0.95:  # >95% of pixels stable corn
+            if tile.mean() > stable_threshold:
                 coords.append((y, x))
     if max_tiles:
         coords = coords[:max_tiles]
@@ -23,7 +23,11 @@ def extract_tiles_from_cube(cube: np.ndarray, coords, tile_size=32) -> np.ndarra
     """
     tiles = []
     for y, x in coords:
-        tiles.append(cube[y:y + tile_size, x:x + tile_size])
+        tile = cube[y:y + tile_size, x:x + tile_size]
+        # Skip partial tiles near image borders
+        if tile.shape[0] != tile_size or tile.shape[1] != tile_size:
+            continue
+        tiles.append(tile)
     if not tiles:
         return np.empty((0, tile_size, tile_size) + cube.shape[2:])
     return np.stack(tiles, axis=0)
