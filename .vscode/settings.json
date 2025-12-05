@@ -8,5 +8,6 @@
     "PYTHONPATH": "${workspaceFolder}"
   },
   "jupyter.notebookFileRoot": "${workspaceFolder}",
-  "jupyter.jupyterServerType": "local"
+  "jupyter.jupyterServerType": "local",
+  "python-envs.pythonProjects": []
 }

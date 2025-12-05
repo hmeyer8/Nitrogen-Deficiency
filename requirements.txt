@@ -15,3 +15,4 @@ sentinelhub         # client for Copernicus / Sentinel Hub APIs :contentReferenc
 matplotlib
 jupyterlab
 ipykernel
+seaborn

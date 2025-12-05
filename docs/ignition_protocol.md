@@ -9,12 +9,12 @@ Phase 1 — Local Project Setup (One-Time)
 
 macOS / Linux:
 ```
-cd ~/dev/nitrogen-features
+cd ~Nitrogen-Deficiency
 ```
 
 Windows PowerShell:
 ```
-Set-Location ~/dev/nitrogen-features
+Set-Location ~Nitrogen-Deficiency
 ```
 
 2. Create and Activate a Virtual Environment
@@ -188,18 +188,29 @@ missing = [y for y in years if not (CDL_DIR / f"cdl_NE_{y}.tif").exists()]
 print("Missing:", missing)
 PY
 ```
+Powershell:
+
+```
+@'
+from src.config import CDL_DIR
+years = [2019, 2020, 2021, 2022, 2023, 2024]
+missing = [y for y in years if not (CDL_DIR / f"cdl_NE_{y}.tif").exists()]
+print("Missing:", missing)
+'@ | python -
+```
+
 `Missing: []` is required before moving on.
 
 6. Download Sentinel-2 Data by Year
 
 Run each command individually:
 ```
-python -m src.datasources.sentinel_download --year 2019
-python -m src.datasources.sentinel_download --year 2020
-python -m src.datasources.sentinel_download --year 2021
-python -m src.datasources.sentinel_download --year 2022
-python -m src.datasources.sentinel_download --year 2023
-python -m src.datasources.sentinel_download --year 2024
+python -m src.datasources.sentinel_download --year 2019 --verbose
+python -m src.datasources.sentinel_download --year 2020 --verbose
+python -m src.datasources.sentinel_download --year 2021 --verbose
+python -m src.datasources.sentinel_download --year 2022 --verbose
+python -m src.datasources.sentinel_download --year 2023 --verbose
+python -m src.datasources.sentinel_download --year 2024 --verbose
 ```
 
 Each command must produce:
@@ -209,6 +220,8 @@ data/raw/sentinel/s2_ne_YYYY.npy
 Do not proceed until all six years exist.
 
 Sanity check Sentinel cubes:
+
+linux
 ```
 python - <<'PY'
 import numpy as np
@@ -223,6 +236,22 @@ for y in years:
         print(y, "ERR", e)
 PY
 ```
+wsl
+```
+@'
+import numpy as np
+from src.config import SENTINEL_DIR
+years = [2019, 2020, 2021, 2022, 2023, 2024]
+for y in years:
+    p = SENTINEL_DIR / f"s2_ne_{y}.npy"
+    try:
+        arr = np.load(p)
+        print(f"{y}: exists={p.exists()} shape={arr.shape}")
+    except Exception as e:
+        print(f"{y}: ERR {e}")
+'@ | python -
+```
+
 Each year should print `True (H, W, 11)`; fix any errors before continuing.
 
 Phase 3 — Build Training and Test Datasets
@@ -257,6 +286,16 @@ for name in ["X_train","y_train","X_test","y_test"]:
     arr = np.load(INTERIM_DIR / f"{name}.npy")
     print(name, arr.shape)
 PY
+```
+powershell
+```
+@'
+import numpy as np
+from src.config import INTERIM_DIR
+for name in ["X_train", "y_train", "X_test", "y_test"]:
+    arr = np.load(INTERIM_DIR / f"{name}.npy")
+    print(f"{name}: {arr.shape}")
+'@ | python -
 ```
 If any shape shows 0 rows, reduce cloud threshold or shrink AOI and rerun prepare_dataset.
 
