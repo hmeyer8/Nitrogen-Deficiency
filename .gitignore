@@ -3,3 +3,5 @@ data/
 __pycache__/
 *.npy
 .venv
+notebooks/.ipynb_checkpoints/
+ipynb_checkpoints/
