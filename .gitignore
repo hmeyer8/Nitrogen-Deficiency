@@ -5,3 +5,4 @@ __pycache__/
 .venv
 notebooks/.ipynb_checkpoints/
 ipynb_checkpoints/
+catboost_info/

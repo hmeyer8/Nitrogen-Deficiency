@@ -201,7 +201,7 @@ print("Missing:", missing)
 
 `Missing: []` is required before moving on.
 
-6. Download Sentinel-2 Data by Year
+6. Download Sentinel-2 Data by Year (set `S2_SOURCE=cdse` for Copernicus Data Space, or `S2_SOURCE=pc` for free AWS/Planetary Computer COGs)
 
 Run each command individually:
 ```
@@ -212,8 +212,14 @@ python -m src.datasources.sentinel_download --year 2022 --verbose
 python -m src.datasources.sentinel_download --year 2023 --verbose
 python -m src.datasources.sentinel_download --year 2024 --verbose
 ```
+If you prefer an explicit Planetary Computer pull (bypassing sentinel_download toggle):
+```
+python -m src.datasources.sentinel_download_pc --year 2019 --verbose
+...
+python -m src.datasources.sentinel_download_pc --year 2024 --verbose
+```
 
-Each command must produce:
+Each command must produce a time-series cube with 3 intra-season windows:
 
 data/raw/sentinel/s2_ne_YYYY.npy
 
@@ -255,7 +261,7 @@ for y in years:
 Each year should print `True (H, W, 11)`; fix any errors before continuing.
 
 Phase 3 — Build Training and Test Datasets
-7. Generate Leakage-Safe Train/Test Split
+7. Generate Leakage-Safe Train/Test Split (stable corn = intersection 2019–2024)
 ```
 python -m src.experiments.prepare_dataset
 ```
@@ -299,17 +305,26 @@ for name in ["X_train", "y_train", "X_test", "y_test"]:
 ```
 If any shape shows 0 rows, reduce cloud threshold or shrink AOI and rerun prepare_dataset.
 
-Phase 4 — Train PCA vs Autoencoder Features
+Phase 4 — Train Feature Models (PCA, Autoencoder, CatBoost)
 8. Train Feature Models
 ```
-python -m src.experiments.train_pca_vs_ae
+python -m src.experiments.train_pca_ae_catboost
 ```
 
 This must produce:
 
 data/interim/
+- scaler.joblib
+- pca_model.joblib
+- autoencoder.pt
+- catboost_model.cbm
+- Zp_train.npy / Zp_test.npy
+- Za_train.npy / Za_test.npy
 - y_pred_pca.npy
 - y_pred_ae.npy
+- y_pred_catboost.npy
+- model_metrics.json
+- pred_vs_true.png
 
 If any error occurs here, review the stack trace before continuing.
 
@@ -317,12 +332,12 @@ Sanity check predictions exist:
 ```
 python - <<'PY'
 from src.config import INTERIM_DIR
-for name in ["y_pred_pca.npy","y_pred_ae.npy"]:
+for name in ["y_pred_pca.npy","y_pred_ae.npy","y_pred_catboost.npy"]:
     p = INTERIM_DIR / name
     print(name, p.exists())
 PY
 ```
-Both should be `True`.
+All should be `True`.
 
 Phase 5 — Final Held-Out Evaluation (Most Important Result)
 9. Evaluate Performance on 2024 Only
@@ -342,11 +357,16 @@ R^2 = 0.5123
 RMSE = 0.0711
 Pearson r = 0.7488
 
+[CatBoost]
+R^2 = 0.5012
+RMSE = 0.0735
+Pearson r = 0.7421
+
 Interpretation:
 
-If Autoencoder > PCA → nitrogen stress is likely nonlinear
-
-If PCA ≈ Autoencoder → nitrogen stress is primarily linear–spectral
+If Autoencoder > PCA → nitrogen stress is likely nonlinear  
+If PCA ≈ Autoencoder → nitrogen stress is primarily linear–spectral  
+If CatBoost ≥ others → tree ensembles can capture needed interactions without explicit feature learning
 
 These values represent the project’s final scientific conclusion.
 

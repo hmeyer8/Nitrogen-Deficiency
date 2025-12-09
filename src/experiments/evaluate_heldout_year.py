@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from scipy.stats import pearsonr
 from sklearn.metrics import mean_squared_error, r2_score
@@ -20,12 +21,22 @@ def report_metrics(y_true, y_pred, label):
 
 
 def main():
-    y_test = np.load(INTERIM_DIR / "y_test.npy")
+    target_mode = os.getenv("TARGET_MODE", "ndre")  # ndre | deficit_score
+    target_files = {
+        "ndre": "y_test.npy",
+        "deficit_score": "y_test_deficit_score.npy",
+    }
+    if target_mode not in target_files:
+        raise ValueError(f"Unknown TARGET_MODE={target_mode}; choose ndre or deficit_score")
+
+    y_test = np.load(INTERIM_DIR / target_files[target_mode])
     y_pred_pca = np.load(INTERIM_DIR / "y_pred_pca.npy")
     y_pred_ae = np.load(INTERIM_DIR / "y_pred_ae.npy")
+    y_pred_cb = np.load(INTERIM_DIR / "y_pred_catboost.npy")
 
-    report_metrics(y_test, y_pred_pca, "PCA / SVD")
-    report_metrics(y_test, y_pred_ae, "Autoencoder")
+    report_metrics(y_test, y_pred_pca, f"PCA / SVD ({target_mode})")
+    report_metrics(y_test, y_pred_ae, f"Autoencoder ({target_mode})")
+    report_metrics(y_test, y_pred_cb, f"CatBoost Gradient Booster ({target_mode})")
 
 
 if __name__ == "__main__":

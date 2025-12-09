@@ -22,6 +22,10 @@ class PCAFeatureExtractor:
     def fit_transform(self, X: np.ndarray):
         return self.pca.fit_transform(X)
 
+    def inverse_transform(self, Z: np.ndarray):
+        # Reconstruct from latent space back to original pixel space
+        return self.pca.inverse_transform(Z)
+
     @property
     def components_(self):
         # Each row: principal direction in original feature space

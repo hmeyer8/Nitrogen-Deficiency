@@ -19,3 +19,8 @@ matplotlib
 jupyterlab
 ipykernel
 seaborn
+catboost
+pystac-client
+stackstac
+planetary-computer
+odc-stac

@@ -2,6 +2,7 @@
 
 import argparse
 import math
+import os
 from datetime import date
 from pathlib import Path
 
@@ -40,9 +41,21 @@ function evaluatePixel(sample) {
 
 RESOLUTION_METERS = 60  # downsample to keep request sizes reasonable
 MAX_TILE_SIZE = 2000    # Sentinel Hub per-request limit is 2500 px; stay under it
+SEASON_WINDOWS = [
+    (6, 1, 6, 30),
+    (7, 1, 7, 31),
+    (8, 1, 8, 31),
+]
+S2_SOURCE = os.getenv("S2_SOURCE", "cdse").lower()  # cdse | pc
 
 
 def download_sentinel_cube(year: int, verbose: bool = False):
+    if S2_SOURCE == "pc":
+        return download_sentinel_cube_pc(year=year, verbose=verbose)
+    return download_sentinel_cube_cdse(year=year, verbose=verbose)
+
+
+def download_sentinel_cube_cdse(year: int, verbose: bool = False):
     config = get_sh_config()
 
     minx, miny, maxx, maxy = NEBRASKA_BBOX
@@ -54,20 +67,20 @@ def download_sentinel_cube(year: int, verbose: bool = False):
     tiles_x = math.ceil(full_width / MAX_TILE_SIZE)
     tiles_y = math.ceil(full_height / MAX_TILE_SIZE)
 
-    time_interval = (
-        date(year, 6, 1),
-        date(year, 8, 31)
-    )
+    time_windows = [
+        (date(year, m1, d1), date(year, m2, d2)) for (m1, d1, m2, d2) in SEASON_WINDOWS
+    ]
 
     if verbose:
-        print("Requesting Sentinel-2 L2A")
+        print("Requesting Sentinel-2 L2A time series")
         print("Year:", year)
+        print("Windows:", time_windows)
         print("AOI:", bbox_wgs84)
         print("Resolution (m):", RESOLUTION_METERS)
         print("Full raster size:", full_width, full_height)
         print("Grid tiles (y, x):", tiles_y, tiles_x)
 
-    cube = np.empty((full_height, full_width, 11), dtype=np.float32)
+    cube = np.empty((len(time_windows), full_height, full_width, 11), dtype=np.float32)
 
     pixel_size_x = (bbox.max_x - bbox.min_x) / full_width
     pixel_size_y = (bbox.max_y - bbox.min_y) / full_height
@@ -92,49 +105,52 @@ def download_sentinel_cube(year: int, verbose: bool = False):
         print("Row heights:", row_heights)
         print("Total tiles:", total_tiles)
 
-    tile_idx = 0
-    y_offset = 0
-    for row_h in row_heights:
-        x_offset = 0
-        y_top = bbox.max_y - y_offset * pixel_size_y
-        y_bottom = y_top - row_h * pixel_size_y
+    for t, time_interval in enumerate(time_windows):
+        if verbose:
+            print(f"\nWindow {t+1}/{len(time_windows)}: {time_interval}")
+        tile_idx = 0
+        y_offset = 0
+        for row_h in row_heights:
+            x_offset = 0
+            y_top = bbox.max_y - y_offset * pixel_size_y
+            y_bottom = y_top - row_h * pixel_size_y
 
-        for col_w in col_widths:
-            x_left = bbox.min_x + x_offset * pixel_size_x
-            x_right = x_left + col_w * pixel_size_x
+            for col_w in col_widths:
+                x_left = bbox.min_x + x_offset * pixel_size_x
+                x_right = x_left + col_w * pixel_size_x
 
-            tile_bbox = BBox((x_left, y_bottom, x_right, y_top), crs=CRS.POP_WEB)
-            size = (col_w, row_h)
+                tile_bbox = BBox((x_left, y_bottom, x_right, y_top), crs=CRS.POP_WEB)
+                size = (col_w, row_h)
 
-            request = SentinelHubRequest(
-                evalscript=EVALSCRIPT,
-                input_data=[SentinelHubRequest.input_data(
-                    data_collection=CDSE_S2_L2A,
-                    time_interval=time_interval,
-                    mosaicking_order="mostRecent"
-                )],
-                responses=[SentinelHubRequest.output_response("default", MimeType.TIFF)],
-                bbox=tile_bbox,
-                size=size,
-                config=config,
-            )
+                request = SentinelHubRequest(
+                    evalscript=EVALSCRIPT,
+                    input_data=[SentinelHubRequest.input_data(
+                        data_collection=CDSE_S2_L2A,
+                        time_interval=time_interval,
+                        mosaicking_order="mostRecent"
+                    )],
+                    responses=[SentinelHubRequest.output_response("default", MimeType.TIFF)],
+                    bbox=tile_bbox,
+                    size=size,
+                    config=config,
+                )
 
-            tile = request.get_data()[0]
-            th, tw = tile.shape[:2]
+                tile = request.get_data()[0]
+                th, tw = tile.shape[:2]
 
-            y0 = y_offset
-            y1 = y_offset + th
-            x0 = x_offset
-            x1 = x_offset + tw
+                y0 = y_offset
+                y1 = y_offset + th
+                x0 = x_offset
+                x1 = x_offset + tw
 
-            cube[y0:y1, x0:x1] = tile
+                cube[t, y0:y1, x0:x1] = tile
 
-            tile_idx += 1
-            if verbose:
-                print(f"Tile {tile_idx}/{total_tiles}: bbox={tile_bbox}, size=({tw},{th}) placed at ({y0}:{y1}, {x0}:{x1})")
+                tile_idx += 1
+                if verbose:
+                    print(f"Tile {tile_idx}/{total_tiles}: bbox={tile_bbox}, size=({tw},{th}) placed at ({y0}:{y1}, {x0}:{x1})")
 
-            x_offset += col_w
-        y_offset += row_h
+                x_offset += col_w
+            y_offset += row_h
 
     SENTINEL_DIR.mkdir(parents=True, exist_ok=True)
     out_path = SENTINEL_DIR / f"s2_ne_{year}.npy"
@@ -144,6 +160,56 @@ def download_sentinel_cube(year: int, verbose: bool = False):
         print("Saved:", out_path)
         print("Array shape:", cube.shape)
 
+    return out_path
+
+
+def download_sentinel_cube_pc(year: int, verbose: bool = False):
+    """
+    Download Sentinel-2 L2A from Planetary Computer / AWS sentinel-cogs.
+    Produces a time stack matching the CDSE shape: (T, H, W, 11) at 60m.
+    """
+    from shapely.geometry import box
+    from pystac_client import Client
+    import stackstac
+    import dask.array as da
+
+    time_windows = [
+        (date(year, m1, d1), date(year, m2, d2)) for (m1, d1, m2, d2) in SEASON_WINDOWS
+    ]
+
+    aoi_geom = box(*NEBRASKA_BBOX).__geo_interface__
+    client = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
+
+    arrays = []
+    for idx, (start, end) in enumerate(time_windows):
+        search = client.search(
+            collections=["sentinel-2-l2a"],
+            intersects=aoi_geom,
+            datetime=f"{start}/{end}",
+            query={"eo:cloud_cover": {"lt": 30}},
+            max_items=3,
+        )
+        items = list(search.get_items())
+        if not items:
+            raise RuntimeError(f"No Sentinel-2 items for {start} to {end}")
+        cube = stackstac.stack(
+            items,
+            assets=["B02","B03","B04","B05","B06","B07","B08","B8A","B11","B12","SCL"],
+            resolution=RESOLUTION_METERS,
+            chunksize=1024,
+        )
+        # Simple mosaic: mean across available scenes in the window
+        cube = cube.mean("time")
+        arrays.append(cube.data)
+        if verbose:
+            print(f"Window {idx+1}/{len(time_windows)} stacked from {len(items)} scenes.")
+
+    stack = np.stack([arr.compute() for arr in arrays], axis=0).astype(np.float32)
+    SENTINEL_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = SENTINEL_DIR / f"s2_ne_{year}.npy"
+    np.save(out_path, stack)
+    if verbose:
+        print("Saved:", out_path, "shape:", stack.shape)
     return out_path
 
 
