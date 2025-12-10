@@ -4,12 +4,12 @@ This note explains the hybrid phenology model in plain linear-algebra terms. It 
 
 ## Data: 5-step NDRE time series
 - Each field/tile has NDRE at 5 phenology windows (rows are fields, columns are time steps).
-- Build a matrix \(X \in \mathbb{R}^{N \times 5}\); row \(x_i\) is the 5-step series for field \(i\).
+- Build a matrix $X \in \mathbb{R}^{N \times 5}$; row $x_i$ is the 5-step series for field $i$.
 - Standardize each column so every time step is on the same scale:
   $$
   X_{\text{std}}[:, j] = \frac{X[:, j] - \mu_j}{\sigma_j}
   $$
-  where \(\mu_j, \sigma_j\) are the mean and std of column \(j\).
+  where $\mu_j, \sigma_j$ are the mean and std of column $j$.
 
 ## 1) Temporal SVD: the low-rank phenology backbone
 Think of SVD as finding the main “shapes” of healthy growth across time.
@@ -17,24 +17,24 @@ Think of SVD as finding the main “shapes” of healthy growth across time.
   $$
   X_{\text{std}} = U \Sigma V^\top
   $$
-- Keep the smallest \(k \le 5\) singular values that explain at least 95% of the variance:
+- Keep the smallest $k \le 5$ singular values that explain at least 95% of the variance:
   $$
   \frac{\sum_{i=1}^{k} \sigma_i^2}{\sum_{i=1}^{5} \sigma_i^2} \ge 0.95
   $$
-- For each field \(i\):
-  - Phenology coordinates (PC scores): \(s_i = x_i V_k \in \mathbb{R}^k\)
-  - Expected low-rank trajectory: \(\hat{x}_i = s_i V_k^\top \in \mathbb{R}^5\)
-  - Residual (what does not fit the backbone): \(r_i = x_i - \hat{x}_i\)
-  - Residual size (SVD anomaly): \(a_i = \|r_i\|_2\)
+- For each field $i$:
+  - Phenology coordinates (PC scores): $s_i = x_i V_k \in \mathbb{R}^k$
+  - Expected low-rank trajectory: $\hat{x}_i = s_i V_k^\top \in \mathbb{R}^5$
+  - Residual (what does not fit the backbone): $r_i = x_i - \hat{x}_i$
+  - Residual size (SVD anomaly): $a_i = \|r_i\|_2$
 
 Interpretation:
-- \(V_k\) holds the dominant time patterns (e.g., normal rise and fall of NDRE).
-- \(s_i\) says where the field sits on those patterns.
-- \(r_i\) shows how the field deviates from expected growth; large \(r_i\) can mean stress.
+- $V_k$ holds the dominant time patterns (e.g., normal rise and fall of NDRE).
+- $s_i$ says where the field sits on those patterns.
+- $r_i$ shows how the field deviates from expected growth; large $r_i$ can mean stress.
 
 ## 2) Supervised branch: CatBoost on SVD features
 Goal: use labels (healthy vs deficient) to learn decision rules on the SVD signals.
-- Labels \(y_i \in \{0,1\}\): 1 = likely nitrogen deficient (derived from low NDRE minima).
+- Labels $y_i \in \{0,1\}$: 1 = likely nitrogen deficient (derived from low NDRE minima).
 - Features per field:
   $$
   \text{feat}_i = [\, s_{i,1}, \ldots, s_{i,k},\, a_i,\, \text{mean}(r_i),\, \max |r_i|,\, \text{early\_mean}(r_i),\, \text{late\_mean}(r_i) \,]
@@ -42,10 +42,10 @@ Goal: use labels (healthy vs deficient) to learn decision rules on the SVD signa
   - early_mean: average of the first time steps (t1-t2)
   - late_mean: average of the last time steps (t4-t5)
 - Train a CatBoost classifier:
-  \[
+  $$
   \hat{p}_i = f_{\text{CB}}(\text{feat}_i) \in [0,1]
-  \]
-  where \(\hat{p}_i\) is the probability of nitrogen deficiency.
+  $$
+  where $\hat{p}_i$ is the probability of nitrogen deficiency.
 
 ## 3) Unsupervised branch: autoencoder on stacked channels
 Goal: detect “unhealthy-looking” trajectories without labels by comparing to healthy patterns.
@@ -54,11 +54,14 @@ Goal: detect “unhealthy-looking” trajectories without labels by comparing to
   u_i = [\, x_i,\, \hat{x}_i,\, r_i \,] \in \mathbb{R}^{15}
   $$
   (what happened, what SVD expects, and where they disagree).
-- Train an autoencoder only on healthy fields (\(y_i = 0\)):
-  \[
-  z_i = f_\theta(u_i), \quad \tilde{u}_i = g_\phi(z_i), \quad
-  \min_{\theta,\phi} \sum_i \|u_i - \tilde{u}_i\|_2^2
-  \]
+- Train an autoencoder only on healthy fields ($y_i = 0$):
+  $$
+  \begin{aligned}
+  z_i &= f_\theta(u_i), \\
+  \tilde{u}_i &= g_\phi(z_i), \\
+  \min_{\theta,\phi} &\sum_i \|u_i - \tilde{u}_i\|_2^2
+  \end{aligned}
+  $$
 - AE anomaly score (how “unhealthy” the stacked channels look):
   $$
   b_i = \|u_i - \tilde{u}_i\|_2
@@ -77,9 +80,9 @@ Blend supervised probability with unsupervised stress signals:
 $$
 \text{Risk}_i = \alpha \hat{p}_i + \beta \tilde{a}_i + \gamma \tilde{b}_i, \quad \alpha,\beta,\gamma \ge 0
 $$
-Defaults: \(\alpha = 0.5,\; \beta = 0.25,\; \gamma = 0.25\).
+Defaults: $\alpha = 0.5,\; \beta = 0.25,\; \gamma = 0.25$.
 
-Decision: mark field \(i\) as nitrogen-deficient if \(\text{Risk}_i > \tau\), with \(\tau\) chosen from precision-recall/F1 on validation data.
+Decision: mark field $i$ as nitrogen-deficient if $\text{Risk}_i > \tau$, with $\tau$ chosen from precision-recall/F1 on validation data.
 
 ## How this flags nitrogen issues
 - Low-rank fit catches the expected growth curve; residuals capture “shape errors.”
