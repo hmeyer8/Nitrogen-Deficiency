@@ -24,6 +24,7 @@ def train_catboost_regressor(
     gpu_ram_part: float = 0.6,
     bootstrap_type: str = "Poisson",
     bagging_temperature: Optional[float] = None,
+    l2_leaf_reg: float = 3.0,
 ):
     """
     Train a CatBoost regressor on standardized pixel vectors.
@@ -43,6 +44,7 @@ def train_catboost_regressor(
         max_bin=max_bin,
         task_type="GPU" if use_gpu else "CPU",
         bootstrap_type=bootstrap_type,
+        l2_leaf_reg=l2_leaf_reg,
     )
 
     if use_gpu:

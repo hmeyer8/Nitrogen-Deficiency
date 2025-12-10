@@ -2,7 +2,6 @@
 
 from pathlib import Path
 import json
-import os
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -20,9 +19,12 @@ from src.features.autoencoder import (
 )
 from src.features.pca_svd import PCAFeatureExtractor
 from src.features.catboost_model import train_catboost_regressor, predict_catboost
-from src.config import INTERIM_DIR, GPU_ENABLED
+from src.config import INTERIM_DIR, GPU_ENABLED, TARGET_MODE
 
 def evaluate_regression(y_true, y_pred, label: str):
+    if len(y_true) < 2:
+        print(f"\n[{label}] Not enough samples to compute metrics (n={len(y_true)}).")
+        return dict(r2=float("nan"), rmse=float("nan"), corr=float("nan"))
     r2 = r2_score(y_true, y_pred)
     try:
         rmse = mean_squared_error(y_true, y_pred, squared=False)
@@ -55,7 +57,7 @@ def run_experiment():
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(0)
 
-    target_mode = os.getenv("TARGET_MODE", "ndre")  # ndre | deficit_score
+    target_mode = TARGET_MODE  # ndre | deficit_score
     target_files = {
         "ndre": ("y_train.npy", "y_test.npy"),
         "deficit_score": ("y_train_deficit_score.npy", "y_test_deficit_score.npy"),
@@ -78,7 +80,7 @@ def run_experiment():
     dump(scaler, INTERIM_DIR / "scaler.joblib")
 
     input_dim = X_train.shape[1]
-    latent_dim = 64
+    latent_dim = 32
     device = "cuda" if (GPU_ENABLED and torch.cuda.is_available()) else "cpu"
 
     pca = PCAFeatureExtractor(n_components=latent_dim)
@@ -110,24 +112,53 @@ def run_experiment():
     metrics_ae = evaluate_regression(y_test, y_pred_ae, f"Autoencoder ({target_mode})")
 
     # CatBoost operates directly on the standardized features (no latent encoding)
-    cb_model = train_catboost_regressor(
-        X_train,
-        y_train,
-        X_valid=X_test,
-        y_valid=y_test,
+    # Train CatBoost on PCA embeddings to keep feature dimensionality small and avoid GPU OOM.
+    cb_params = dict(
         iterations=400,
         depth=6,
-        learning_rate=0.05,
+        learning_rate=0.07,
         random_seed=0,
         use_gpu=GPU_ENABLED and torch.cuda.is_available(),
-        gpu_ram_part=0.6,  # cap VRAM usage (fraction of device memory)
-        max_bin=64,
-        subsample=0.8,
+        gpu_ram_part=0.2,  # tighter cap to avoid OOM on 8 GB
+        max_bin=32,
+        subsample=0.85,
         rsm=None,  # rsm not supported on GPU for non-pairwise loss
-        bootstrap_type="Poisson",  # supports subsample on GPU
-        bagging_temperature=None,
+        bootstrap_type="Poisson",
+        bagging_temperature=1.0,
+        l2_leaf_reg=3.0,
     )
-    y_pred_cb = predict_catboost(cb_model, X_test)
+
+    try:
+        cb_model = train_catboost_regressor(
+            Zp_train,
+            y_train,
+            X_valid=Zp_test,
+            y_valid=y_test,
+            **cb_params,
+        )
+    except Exception as e:
+        msg = str(e)
+        if "Out of memory" in msg or "NCuda" in msg:
+            print("CatBoost GPU OOM; falling back to CPU with lighter settings.")
+            cb_model = train_catboost_regressor(
+                Zp_train,
+                y_train,
+                X_valid=Zp_test,
+                y_valid=y_test,
+                iterations=300,
+                depth=6,
+                learning_rate=0.06,
+                random_seed=0,
+                use_gpu=False,
+                max_bin=32,
+                subsample=0.8,
+                bootstrap_type="Poisson",
+                l2_leaf_reg=4.0,
+            )
+        else:
+            raise
+
+    y_pred_cb = predict_catboost(cb_model, Zp_test)
     metrics_cb = evaluate_regression(y_test, y_pred_cb, f"CatBoost ({target_mode})")
     cb_model.save_model(INTERIM_DIR / "catboost_model.cbm")
 

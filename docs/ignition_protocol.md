@@ -357,7 +357,7 @@ All should be `True`.
 Phase 5 — Temporal Forecasting (predict end-of-season NDRE/deficit from early windows)
 9. Train Temporal Forecaster
 ```
-# match TARGET_MODE to the signal you want (deficit_score recommended)
+# TARGET_MODE is read from .env (deficit_score by default)
 python -m src.experiments.train_temporal_forecaster
 ```
 

@@ -3,6 +3,7 @@
 import argparse
 import gc
 import itertools
+import os
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -20,7 +21,10 @@ from src.geo.aoi_nebraska import NEBRASKA_BBOX
 from src.config import get_target_crop_code, get_season_windows_for_crop, TARGET_CROP
 from src.datasources.cdl_loader import build_stable_crop_mask_from_years
 
+# Keep memory low: modest chunking and single-worker writes.
 RESOLUTION_METERS = 60
+STORE_WORKERS = int(os.getenv("PC_STORE_WORKERS", "1"))
+CHUNK_SIZE = int(os.getenv("PC_CHUNK_SIZE", "512"))
 STABLE_YEARS = [2019, 2020, 2021, 2022, 2023, 2024]
 ASSETS = ["B02","B03","B04","B05","B06","B07","B08","B8A","B11","B12","SCL"]
 
@@ -98,9 +102,10 @@ def download_pc(
             resolution=RESOLUTION_METERS,
             epsg=3857,
             bounds=bounds_3857,
-            chunksize=1024,
+            chunksize=CHUNK_SIZE,
         )
         cube = cube.mean("time").transpose("y", "x", "band")
+        cube = cube.chunk({"y": CHUNK_SIZE, "x": CHUNK_SIZE})
         arr_da = cube.data.astype(np.float32)  # dask array (y, x, band)
         window_arrays.append(arr_da)
         h, w, _ = arr_da.shape
@@ -129,7 +134,7 @@ def download_pc(
             continue
         h, w, b = arr.shape
         target = memmap[idx, :h, :w, :b]
-        da.store(arr, target, lock=False, compute=True)
+        da.store(arr, target, lock=False, compute=True, num_workers=STORE_WORKERS)
         del arr, target
         gc.collect()
 

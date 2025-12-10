@@ -32,6 +32,8 @@ def _to_bool(val: str) -> bool:
 GPU_ENABLED = _to_bool(os.getenv("GPU_ENABLED", "false"))
 TARGET_CROP = os.getenv("TARGET_CROP", "corn").lower()
 S2_SOURCE = os.getenv("S2_SOURCE", "cdse").lower()
+# Default to direct NDRE regression for highest fidelity; override via TARGET_MODE in .env if desired.
+TARGET_MODE = os.getenv("TARGET_MODE", "ndre").lower()  # ndre | deficit_score
 
 # CDL crop codes
 CROP_NAME_TO_CODE = {

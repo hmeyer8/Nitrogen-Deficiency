@@ -12,13 +12,19 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import r2_score, mean_squared_error
 from scipy.stats import pearsonr
 
-from src.config import INTERIM_DIR, GPU_ENABLED
+from src.config import INTERIM_DIR, GPU_ENABLED, TARGET_MODE
 
 
 class GRURegressor(nn.Module):
-    def __init__(self, input_dim=1, hidden_dim=64, num_layers=1):
+    def __init__(self, input_dim=1, hidden_dim=64, num_layers=1, dropout=0.1):
         super().__init__()
-        self.gru = nn.GRU(input_dim, hidden_dim, num_layers=num_layers, batch_first=True)
+        self.gru = nn.GRU(
+            input_dim,
+            hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0.0,
+        )
         self.head = nn.Linear(hidden_dim, 1)
 
     def forward(self, x):
@@ -29,6 +35,8 @@ class GRURegressor(nn.Module):
 
 
 def evaluate_regression(y_true, y_pred):
+    if len(y_true) < 2:
+        return dict(r2=float("nan"), rmse=float("nan"), corr=float("nan"))
     r2 = r2_score(y_true, y_pred)
     try:
         rmse = mean_squared_error(y_true, y_pred, squared=False)
@@ -40,11 +48,16 @@ def evaluate_regression(y_true, y_pred):
 
 def run():
     device = "cuda" if (GPU_ENABLED and torch.cuda.is_available()) else "cpu"
-    target_mode = os.getenv("TARGET_MODE", "ndre")  # ndre | deficit_score
+    target_mode = TARGET_MODE  # ndre | deficit_score
 
     # Inputs: early-season NDRE time series (exclude last window)
     ndre_ts_train = np.load(INTERIM_DIR / "ndre_ts_train.npy")
     ndre_ts_test = np.load(INTERIM_DIR / "ndre_ts_test.npy")
+    # Drop rows with any NaNs (tiny test set otherwise breaks metrics)
+    def drop_nan_rows(arr):
+        mask = np.all(np.isfinite(arr), axis=1)
+        return arr[mask], mask
+
     X_train = ndre_ts_train[:, :-1]  # shape: (N, T-1)
     X_test = ndre_ts_test[:, :-1]
 
@@ -56,6 +69,15 @@ def run():
         raise ValueError(f"Unknown TARGET_MODE={target_mode}; choose ndre or deficit_score")
     y_train = np.load(INTERIM_DIR / target_files[target_mode][0])
     y_test = np.load(INTERIM_DIR / target_files[target_mode][1])
+
+    X_train, mask_train = drop_nan_rows(X_train)
+    y_train = y_train[mask_train]
+    X_test, mask_test = drop_nan_rows(X_test)
+    y_test = y_test[mask_test]
+
+    if len(y_test) < 1:
+        print("Not enough clean test samples for temporal forecaster; skipping evaluation.")
+        return
 
     # Scale inputs and targets
     x_scaler = StandardScaler()
@@ -78,7 +100,7 @@ def run():
     train_loader = DataLoader(train_ds, batch_size=256, shuffle=True)
     test_loader = DataLoader(test_ds, batch_size=512, shuffle=False)
 
-    model = GRURegressor(input_dim=1, hidden_dim=64, num_layers=1).to(device)
+    model = GRURegressor(input_dim=1, hidden_dim=64, num_layers=2, dropout=0.1).to(device)
     optim = torch.optim.Adam(model.parameters(), lr=1e-3)
     loss_fn = nn.MSELoss()
 

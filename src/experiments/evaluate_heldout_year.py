@@ -1,9 +1,8 @@
-import os
 import numpy as np
 from scipy.stats import pearsonr
 from sklearn.metrics import mean_squared_error, r2_score
 
-from src.config import INTERIM_DIR
+from src.config import INTERIM_DIR, TARGET_MODE
 
 
 def report_metrics(y_true, y_pred, label):
@@ -21,7 +20,7 @@ def report_metrics(y_true, y_pred, label):
 
 
 def main():
-    target_mode = os.getenv("TARGET_MODE", "ndre")  # ndre | deficit_score
+    target_mode = TARGET_MODE  # ndre | deficit_score
     target_files = {
         "ndre": "y_test.npy",
         "deficit_score": "y_test_deficit_score.npy",
