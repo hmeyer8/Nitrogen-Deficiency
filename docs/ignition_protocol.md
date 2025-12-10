@@ -1,6 +1,6 @@
 Project Startup Guide - Hybrid Temporal SVD Pipeline
 
-This guide shows how to set up locally, download data, build the time-series datasets, and train the hybrid nitrogen-risk model (temporal SVD + CatBoost + AE + fusion).
+This guide shows how to set up locally, download data, build the time-series datasets, and train the hybrid nitrogen-risk model (temporal SVD + CatBoost + AE + fusion). Follow `docs/eval_protocol.md` for the fixed 2019–2020 train, 2021–2022 val, 2023–2024 test split.
 
 Phase 1 - Local Project Setup (one-time)
 1) Navigate to repo:

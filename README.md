@@ -1,89 +1,77 @@
 # Hybrid Nitrogen Risk: Temporal SVD + CatBoost + Autoencoder
 
-End-to-end, time-series phenology modeling on Nebraska corn fields using:
-- **Temporal SVD** to learn a low-rank phenology manifold and residual stress signal.
-- **CatBoost classifier** on SVD-derived features (PC scores + residual statistics).
-- **Autoencoder anomaly** on stacked SVD channels \([x, \hat{x}, r]\).
-- **Hybrid risk fusion** combining supervised probability with two unsupervised anomalies.
-
-Core question: can low-rank phenology plus residual-aware anomalies robustly flag nitrogen deficiency when labels are weak?
+End-to-end phenology modeling on Nebraska corn fields with temporal SVD features, CatBoost classification, AE anomaly detection, and fusion.
 
 ---
 
-## 1. Scientific Objectives
-- Enforce **stable-corn pixels** across 2019–2024 using CDL intersections.
-- Extract **Sentinel-2 L2A** stacks over phenology-aligned windows; compute NDVI/NDRE.
-- Build **5-step NDRE time series** per tile; derive weak nitrogen labels from NDRE minima.
-- Learn phenology coordinates via **temporal SVD**, capture deviations via residuals.
-- Combine **supervised CatBoost** and **unsupervised AE** anomalies into a **single risk score**.
+## Current Status
+- Stable-corn mask and Sentinel-2 NDRE/NDVI cubes built for 2019–2024; NDRE-based deficit proxy stored in `data/interim/deficit_threshold.txt`.
+- Canonical split locked: train 2019–2020, validation 2021–2022, test 2023–2024 (see `docs/eval_protocol.md`); test remains untouched during tuning.
+- Active path: hybrid pipeline (temporal SVD backbone + CatBoost classifier + AE anomaly + fusion). Legacy PCA/AE/CB regression scripts were removed.
+- Visualization/debug: `notebooks/03_feature_visualization.ipynb` for SVD loadings, CatBoost importance, and AE reconstruction error checks.
 
 ---
 
-## 2. Data Sources
-- **USDA Cropland Data Layer (CDL)**: annual 30 m crop classification (NE).
-- **Sentinel-2 L2A**: Copernicus Data Space or Planetary Computer COGs (11 bands incl. SCL).
+## Data Sources & Protocol
+- **USDA Cropland Data Layer (CDL):** annual 30 m crop classification (NE) to build the stable-corn mask.
+- **Sentinel-2 L2A NDRE/NDVI:** Copernicus Data Space (default) or Planetary Computer COGs.
+- Labeling: NDRE minima quantile proxy (`NDRE_DEFICIT_Q`, default 50) recorded in `data/interim/deficit_threshold.txt`.
+- Evaluation: follow `docs/eval_protocol.md` for fixed splits, environment defaults, and reporting guardrails.
 
 ---
 
-## 3. Core Experimental Design
-### 3.1 Temporal Split
-- Train: **2019–2023**
-- Held-out test: **2024**
-- Tile coordinates fixed from CDL masks; 2024 NDRE not used for training.
+## Setup & Data (Ignition Protocol)
+See `docs/ignition_protocol.md` for full environment setup, Copernicus credentials, raw data download, dataset build, and training. Quick start after creating/activating `.venv` and `.env`:
 
-### 3.2 Stable Corn Masking
-- Intersect CDL corn across all five years before tiling; discard tiles with low stable coverage.
+```
+python -m pip install -r requirements.txt
+python -m src.experiments.prepare_dataset
+python -m src.experiments.train_temporal_hybrid
+python -m src.experiments.time_series_diagnostics  # optional diagnostics
+```
 
-### 3.3 Weak Nitrogen Labels
-- Per tile, take **min NDRE over the 5 windows** as a weak nitrogen proxy.
-- Deficiency flag = bottom quantile (default 25%) of train NDRE minima; also store z-scores.
-
----
-
-## 4. Hybrid Phenology Math (summary)
-- Standardize columns of \(X \in \mathbb{R}^{N \times 5}\).
-- SVD: \(X = U \Sigma V^\top\); pick smallest \(k \le 5\) with \(\sum_{i=1}^k \sigma_i^2 / \sum_{i=1}^5 \sigma_i^2 \ge 0.95\).
-- Per field \(i\):
-  - PC scores \(s_i = x_i V_k\); reconstruction \(\hat{x}_i = s_i V_k^\top\); residual \(r_i = x_i - \hat{x}_i\); SVD anomaly \(a_i = \|r_i\|_2\).
-- CatBoost features: \([s_i, a_i, \text{mean}(r_i), \max |r_i|, \text{early\_mean}(r_i), \text{late\_mean}(r_i)] \to \hat{p}_i\).
-- AE channels: \(u_i = [x_i, \hat{x}_i, r_i] \in \mathbb{R}^{15}\); train AE on healthy; AE anomaly \(b_i = \|u_i - \tilde{u}_i\|_2\).
-- Hybrid risk: \(\text{Risk}_i = \alpha \hat{p}_i + \beta \tilde{a}_i + \gamma \tilde{b}_i\) with min–max normalized \(\tilde{a}, \tilde{b}\); default \((\alpha,\beta,\gamma) = (0.5, 0.25, 0.25)\); deficient if \(\text{Risk}_i > \tau\) (PR/F1-chosen).
-- Full derivation: `docs/hybrid_temporal_svd_math.md`.
+Env toggles:
+- `S2_SOURCE=cdse` (default) or `S2_SOURCE=pc` for Planetary Computer.
+- Fusion weights: `RISK_ALPHA`, `RISK_BETA`, `RISK_GAMMA`.
 
 ---
 
-## 5. Running the Pipeline (minimal)
-1. Install deps: `python -m pip install -r requirements.txt`
-2. Build datasets (NDRE/NDVI time series + labels):  
-   `python -m src.experiments.prepare_dataset`
-3. Train hybrid model (SVD + CatBoost + AE + fusion):  
-   `python -m src.experiments.train_temporal_hybrid`  
-   - Optional envs: `RISK_ALPHA`, `RISK_BETA`, `RISK_GAMMA` to tune fusion weights.
-4. Optional diagnostics: `python -m src.experiments.time_series_diagnostics`  
-   Optional early-forecast GRU: `python -m src.experiments.train_temporal_forecaster`
+## Hybrid Phenology Math (GitHub-safe sketch)
+We work on standardized 5-step NDRE matrix \(X \in \mathbb{R}^{N \times 5}\). Core transforms:
+$$
+X = U \Sigma V^{\top}, \quad
+s_i = x_i V_k, \quad
+\hat{x}_i = s_i V_k^{\top}, \quad
+r_i = x_i - \hat{x}_i, \quad
+a_i = \lVert r_i \rVert_2
+$$
 
-Key artifacts in `data/interim`:
+Fusion of supervised probability \(\hat{p}_i\) with normalized anomalies \(\tilde{a}_i, \tilde{b}_i\):
+$$
+\text{Risk}_i = \alpha \hat{p}_i + \beta \tilde{a}_i + \gamma \tilde{b}_i
+$$
+
+Full derivation and interpretations: `docs/hybrid_temporal_svd_math.md`.
+
+---
+
+## Key Artifacts & CLI
+Artifacts in `data/interim` after the pipeline:
 - SVD: `svd_components.npy`, `svd_mean.npy`, `svd_std.npy`, `svd_meta.json`, `svd_scores_{split}.npy`, `svd_residual_norm_{split}.npy`
 - CatBoost: `catboost_classifier.cbm`, `catboost_prob_{split}.npy`
 - Autoencoder: `temporal_ae.pt`, `ae_anomaly_{split}.npy`
 - Fusion: `hybrid_risk_{split}.npy`, `hybrid_threshold.txt`, `hybrid_metrics.json`
 - Time series + labels: `ndre_ts_*`, `ndvi_ts_*`, `y_min_*`, `y_*_deficit_label.npy`, `deficit_threshold.txt`
 
-Supported workflows:
-- Core: `prepare_dataset` -> `train_temporal_hybrid`
-- Optional: `time_series_diagnostics`, `train_temporal_forecaster`
-(Legacy PCA/AE/CatBoost regression scripts were removed to avoid confusion; use the hybrid pipeline.)
-
-Data source toggle:
-- `S2_SOURCE=cdse` (default): Copernicus Data Space via sentinelhub.
-- `S2_SOURCE=pc`: free Sentinel-2 L2A COGs via Planetary Computer/AWS.  
-  CLI: `python -m src.datasources.sentinel_download_pc --year 2023 --verbose`
-
-See `docs/ignition_protocol.md` for setup and data download.
+Supported CLI workflows:
+- Core: `python -m src.experiments.prepare_dataset` -> `python -m src.experiments.train_temporal_hybrid`
+- Diagnostics: `python -m src.experiments.time_series_diagnostics`
+- Early forecast (optional): `python -m src.experiments.train_temporal_forecaster`
+- Data source toggle example: `python -m src.datasources.sentinel_download_pc --year 2023 --verbose`
 
 ---
 
-## 6. Nitrogen-Focused Evaluation Tips
+## Nitrogen-Focused Evaluation Tips
 - Focus on **late vegetative/pre-tassel NDRE** windows where red-edge tracks nitrogen status.
 - Stratify by moisture/drought to reduce confounding; compare relative risk within nearby fields.
 - Inspect **SVD loadings** (components) and **CatBoost feature importance** to confirm reliance on red-edge/NIR.
@@ -92,7 +80,7 @@ See `docs/ignition_protocol.md` for setup and data download.
 
 ---
 
-## 7. Repository Structure
+## Repository Structure
 
 ```text
 Nitrogen-Deficiency/

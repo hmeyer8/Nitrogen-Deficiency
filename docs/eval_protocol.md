@@ -2,7 +2,7 @@
 
 This document fixes a reproducible protocol so reported metrics are scientifically defensible and comparable across runs.
 
-## Fixed dataset splits
+## Fixed dataset splits (locked)
 - **Train:** 2019–2020
 - **Validation:** 2021–2022 (used for all tuning and threshold selection)
 - **Test:** 2023–2024 (never used for tuning; reported once per configuration)
