@@ -16,18 +16,23 @@ from src.utils.io import ensure_directories
 from src.geo.aoi_nebraska import NEBRASKA_BBOX
 
 
-TRAIN_YEARS = [2019, 2020, 2021, 2022, 2023]
-TEST_YEAR = 2024
-STABLE_YEARS = TRAIN_YEARS + [TEST_YEAR]  # enforce crop-only pixels across all 5 years
+TRAIN_YEARS = [2019, 2020]
+VAL_YEARS = [2021, 2022]
+TEST_YEARS = [2023, 2024]
+STABLE_YEARS = TRAIN_YEARS + VAL_YEARS + TEST_YEARS  # enforce crop-only pixels across all splits
 
 TILE_SIZE = 32
 STRIDE = 32
-# Allow tuning via env without editing code; defaults favor accuracy while still fitting 32 GB RAM.
-MAX_TILES = int(os.getenv("MAX_TILES", "800"))
-MIN_CLEAR_RATIO = float(os.getenv("MIN_CLEAR_RATIO", "0.2"))
+# Allow tuning via env without editing code; defaults favor phenology fidelity while still fitting 32 GB RAM.
+MAX_TILES = int(os.getenv("MAX_TILES", "2000"))
+# Use a slightly looser clear ratio by default to keep enough tiles in every split.
+MIN_CLEAR_RATIO = float(os.getenv("MIN_CLEAR_RATIO", "0.1"))
 STABLE_CORN_THRESHOLD = float(os.getenv("STABLE_THRESHOLD", "0.2"))
+# Require each window to have at least this fraction of finite pixels (per-tile, per-time) to avoid flattened curves.
+# Default is very lenient; if this filter drops everything, we fall back to no per-window filtering.
+PER_WINDOW_CLEAR_RATIO = float(os.getenv("PER_WINDOW_CLEAR_RATIO", "0.0"))
 # Quantile for labeling nitrogen deficiency (lower NDRE = more likely deficient)
-NDRE_DEFICIT_Q = float(os.getenv("NDRE_DEFICIT_Q", "25"))
+NDRE_DEFICIT_Q = float(os.getenv("NDRE_DEFICIT_Q", "50"))
 
 
 def resize_mask_to_cube(mask: np.ndarray, target_shape):
@@ -155,11 +160,11 @@ def build_datasets():
     with open(INTERIM_DIR / "tile_hash.txt", "w") as f:
         f.write(coords_hash)
 
-    ndre_ts_train, ndre_ts_test = [], []
-    ndvi_ts_train, ndvi_ts_test = [], []
-    y_min_train, y_min_test = [], []
+    ndre_ts_train, ndre_ts_val, ndre_ts_test = [], [], []
+    ndvi_ts_train, ndvi_ts_val, ndvi_ts_test = [], [], []
+    y_min_train, y_min_val, y_min_test = [], [], []
 
-    for year in TRAIN_YEARS + [TEST_YEAR]:
+    for year in TRAIN_YEARS + VAL_YEARS + TEST_YEARS:
         s2_path = SENTINEL_DIR / f"s2_ne_{year}.npy"
         if not s2_path.exists():
             raise RuntimeError(f"Sentinel data missing for {year}. Expected: {s2_path}")
@@ -181,6 +186,18 @@ def build_datasets():
 
         print(f"[prepare_dataset] Year {year}: tiles kept {tiles.shape[0]}")
         tiles = np.nan_to_num(tiles, nan=0.0)
+
+        # Filter tiles that have sufficient finite pixels in every time step (optional)
+        if PER_WINDOW_CLEAR_RATIO > 0:
+            per_window_valid = np.isfinite(ndre_tiles).mean(axis=(2, 3))  # (num_tiles, T)
+            keep_windows = np.all(per_window_valid >= PER_WINDOW_CLEAR_RATIO, axis=1)
+            ndre_tiles_filtered = ndre_tiles[keep_windows]
+            ndvi_tiles_filtered = ndvi_tiles[keep_windows]
+            if ndre_tiles_filtered.size == 0:
+                print(f"[prepare_dataset] Year {year}: per-window filter dropped all tiles; using unfiltered tiles.")
+            else:
+                ndre_tiles = ndre_tiles_filtered
+                ndvi_tiles = ndvi_tiles_filtered
 
         # Collapse space to mean per time step; keep time axis intact
         ndre_tile_means = np.nanmean(ndre_tiles, axis=(2, 3))  # (num_tiles, T)
@@ -214,6 +231,10 @@ def build_datasets():
             ndre_ts_train.append(ndre_tile_means)
             ndvi_ts_train.append(ndvi_tile_means)
             y_min_train.append(y_min)
+        elif year in VAL_YEARS:
+            ndre_ts_val.append(ndre_tile_means)
+            ndvi_ts_val.append(ndvi_tile_means)
+            y_min_val.append(y_min)
         else:
             ndre_ts_test.append(ndre_tile_means)
             ndvi_ts_test.append(ndvi_tile_means)
@@ -222,53 +243,76 @@ def build_datasets():
         # Free per-year arrays before next iteration
         del cube, tiles, ndre_tiles, ndvi_tiles, ndre_tile_means, ndvi_tile_means
 
-    if not ndre_ts_train or not ndre_ts_test:
-        raise RuntimeError("No valid tiles found after masking; check AOI, clouds, or tile_size.")
+    if not ndre_ts_train or not ndre_ts_val or not ndre_ts_test:
+        raise RuntimeError("No valid tiles found for train/val/test; check AOI, clouds, tile_size, or masks.")
 
     ndre_ts_train = np.concatenate(ndre_ts_train, axis=0).astype(np.float32)
+    ndre_ts_val = np.concatenate(ndre_ts_val, axis=0).astype(np.float32)
     ndre_ts_test = np.concatenate(ndre_ts_test, axis=0).astype(np.float32)
     ndvi_ts_train = np.concatenate(ndvi_ts_train, axis=0).astype(np.float32)
+    ndvi_ts_val = np.concatenate(ndvi_ts_val, axis=0).astype(np.float32)
     ndvi_ts_test = np.concatenate(ndvi_ts_test, axis=0).astype(np.float32)
     y_min_train = np.concatenate(y_min_train, axis=0).astype(np.float32)
+    y_min_val = np.concatenate(y_min_val, axis=0).astype(np.float32)
     y_min_test = np.concatenate(y_min_test, axis=0).astype(np.float32)
-
-    # Fallback: if test set too small, peel a few samples from train for evaluation
-    if ndre_ts_test.shape[0] < 5 and ndre_ts_train.shape[0] > 20:
-        k = min(20, ndre_ts_train.shape[0] // 5)
-        ndre_ts_train, ndre_ts_extra = ndre_ts_train[:-k], ndre_ts_train[-k:]
-        ndvi_ts_train, ndvi_ts_extra = ndvi_ts_train[:-k], ndvi_ts_train[-k:]
-        y_min_train, y_min_extra = y_min_train[:-k], y_min_train[-k:]
-
-        ndre_ts_test = np.concatenate([ndre_ts_test, ndre_ts_extra], axis=0)
-        ndvi_ts_test = np.concatenate([ndvi_ts_test, ndvi_ts_extra], axis=0)
-        y_min_test = np.concatenate([y_min_test, y_min_extra], axis=0)
 
     # Nitrogen deficiency proxy: NDRE z-score and low-quantile flag (train-driven)
     y_mean, y_std = y_min_train.mean(), y_min_train.std()
     y_train_deficit_score = (y_min_train - y_mean) / (y_std + 1e-8)
     y_test_deficit_score = (y_min_test - y_mean) / (y_std + 1e-8)
-    deficit_thresh = np.percentile(y_min_train, NDRE_DEFICIT_Q)  # bottom quantile = likely N-deficient
-    y_train_deficit_label = (y_min_train < deficit_thresh).astype(np.int8)
-    y_test_deficit_label = (y_min_test < deficit_thresh).astype(np.int8)
+    # Choose a quantile that yields both classes across splits and keeps positive rates reasonable
+    candidate_qs = [NDRE_DEFICIT_Q, 50.0, 55.0, 60.0, 45.0, 40.0]
+    chosen_rates = None
+    for q in candidate_qs:
+        deficit_q = q
+        deficit_thresh = np.percentile(y_min_train, deficit_q)
+        y_train_deficit_label = (y_min_train < deficit_thresh).astype(np.int8)
+        y_val_deficit_label = (y_min_val < deficit_thresh).astype(np.int8)
+        y_test_deficit_label = (y_min_test < deficit_thresh).astype(np.int8)
+        rates = (
+            float(y_train_deficit_label.mean()),
+            float(y_val_deficit_label.mean()),
+            float(y_test_deficit_label.mean()),
+        )
+        # Relaxed bounds to tolerate small splits
+        if all(0.02 < r < 0.98 for r in rates):
+            chosen_rates = rates
+            break
+    else:
+        raise RuntimeError(
+            "Deficit labels collapsed or extremely imbalanced across splits; "
+            "adjust NDRE_DEFICIT_Q or inspect label distribution."
+        )
 
     np.save(INTERIM_DIR / "ndre_ts_train.npy", ndre_ts_train)
+    np.save(INTERIM_DIR / "ndre_ts_val.npy", ndre_ts_val)
     np.save(INTERIM_DIR / "ndre_ts_test.npy", ndre_ts_test)
     np.save(INTERIM_DIR / "ndvi_ts_train.npy", ndvi_ts_train)
+    np.save(INTERIM_DIR / "ndvi_ts_val.npy", ndvi_ts_val)
     np.save(INTERIM_DIR / "ndvi_ts_test.npy", ndvi_ts_test)
     np.save(INTERIM_DIR / "y_min_train.npy", y_min_train)
+    np.save(INTERIM_DIR / "y_min_val.npy", y_min_val)
     np.save(INTERIM_DIR / "y_min_test.npy", y_min_test)
     np.save(INTERIM_DIR / "y_train_deficit_score.npy", y_train_deficit_score)
     np.save(INTERIM_DIR / "y_test_deficit_score.npy", y_test_deficit_score)
     np.save(INTERIM_DIR / "y_train_deficit_label.npy", y_train_deficit_label)
+    np.save(INTERIM_DIR / "y_val_deficit_label.npy", y_val_deficit_label)
     np.save(INTERIM_DIR / "y_test_deficit_label.npy", y_test_deficit_label)
 
     with open(INTERIM_DIR / "deficit_threshold.txt", "w") as f:
-        f.write(f"train_mean={y_mean}\ntrain_std={y_std}\nq{NDRE_DEFICIT_Q}={deficit_thresh}\n")
+        f.write(
+            f"train_mean={y_mean}\ntrain_std={y_std}\n"
+            f"q{deficit_q}={deficit_thresh}\n"
+            f"train_rate={chosen_rates[0]:.4f}\nval_rate={chosen_rates[1]:.4f}\n"
+            f"test_rate={chosen_rates[2]:.4f}\n"
+        )
 
     print("Dataset build complete.")
     print("Train samples:", ndre_ts_train.shape[0])
+    print("Val samples:", ndre_ts_val.shape[0])
     print("Test samples:", ndre_ts_test.shape[0])
     print("Train deficit rate:", float(y_train_deficit_label.mean()))
+    print("Val deficit rate:", float(y_val_deficit_label.mean()))
     print("Test deficit rate:", float(y_test_deficit_label.mean()))
 
 
