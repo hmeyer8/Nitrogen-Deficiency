@@ -1,21 +1,24 @@
 # src/experiments/prepare_dataset.py
+#
+# Build NDRE/NDVI time-series datasets for SVD phenology modeling and downstream
+# CatBoost/autoencoder hybrids. Keeps only tiles that are corn-stable across all
+# years and have sufficient clear pixels.
 
 import hashlib
 import os
 import numpy as np
-from pathlib import Path
 
 from src.config import INTERIM_DIR, SENTINEL_DIR
 from src.datasources.cdl_loader import build_stable_corn_mask_from_years
 from src.geo.tiling import generate_tile_coords
-from src.features.indices import compute_ndvi, compute_ndre
+from src.features.indices import compute_ndre, compute_ndvi
 from src.utils.io import ensure_directories
 from src.geo.aoi_nebraska import NEBRASKA_BBOX
 
 
 TRAIN_YEARS = [2019, 2020, 2021, 2022, 2023]
 TEST_YEAR = 2024
-STABLE_YEARS = TRAIN_YEARS + [TEST_YEAR]  # enforce corn-only pixels across all 5 years
+STABLE_YEARS = TRAIN_YEARS + [TEST_YEAR]  # enforce crop-only pixels across all 5 years
 
 TILE_SIZE = 32
 STRIDE = 32
@@ -23,11 +26,8 @@ STRIDE = 32
 MAX_TILES = int(os.getenv("MAX_TILES", "800"))
 MIN_CLEAR_RATIO = float(os.getenv("MIN_CLEAR_RATIO", "0.2"))
 STABLE_CORN_THRESHOLD = float(os.getenv("STABLE_THRESHOLD", "0.2"))
-SEASON_WINDOWS = [
-    (6, 1, 6, 30),
-    (7, 1, 7, 31),
-    (8, 1, 8, 31),
-]
+# Quantile for labeling nitrogen deficiency (lower NDRE = more likely deficient)
+NDRE_DEFICIT_Q = float(os.getenv("NDRE_DEFICIT_Q", "25"))
 
 
 def resize_mask_to_cube(mask: np.ndarray, target_shape):
@@ -112,10 +112,13 @@ def extract_tile_time_series(cube: np.memmap, coords, tile_size: int, min_clear_
 
 
 def build_datasets():
-
+    """
+    Extracts per-tile NDRE/NDVI 5-step time series, enforces stable corn mask across 2019-2024,
+    and emits train/test splits plus nitrogen deficiency proxy labels.
+    """
     ensure_directories()
 
-    # Enforce corn-only tiles across 2019–2024 by intersecting CDL masks
+    # Enforce corn-only tiles across all years by intersecting CDL masks
     stable_mask_train, transform, crs = build_stable_corn_mask_from_years(
         years=STABLE_YEARS,
         aoi=NEBRASKA_BBOX
@@ -148,21 +151,16 @@ def build_datasets():
     )
 
     coords_hash = hash_coords(coords)
-
     np.save(INTERIM_DIR / "tile_coords.npy", np.array(coords, dtype=np.int32))
-
     with open(INTERIM_DIR / "tile_hash.txt", "w") as f:
         f.write(coords_hash)
 
-    X_train, y_train = [], []
-    X_test, y_test = [], []
     ndre_ts_train, ndre_ts_test = [], []
     ndvi_ts_train, ndvi_ts_test = [], []
+    y_min_train, y_min_test = [], []
 
     for year in TRAIN_YEARS + [TEST_YEAR]:
-
         s2_path = SENTINEL_DIR / f"s2_ne_{year}.npy"
-
         if not s2_path.exists():
             raise RuntimeError(f"Sentinel data missing for {year}. Expected: {s2_path}")
 
@@ -182,12 +180,9 @@ def build_datasets():
             continue
 
         print(f"[prepare_dataset] Year {year}: tiles kept {tiles.shape[0]}")
-
         tiles = np.nan_to_num(tiles, nan=0.0)
 
-        # Collapse time and space into feature vectors; time axis retained by flattening
-        X = tiles.reshape(tiles.shape[0], -1)
-        # Nitrogen deficiency proxy: worst NDRE across the season (lower = more deficient)
+        # Collapse space to mean per time step; keep time axis intact
         ndre_tile_means = np.nanmean(ndre_tiles, axis=(2, 3))  # (num_tiles, T)
         ndvi_tile_means = np.nanmean(ndvi_tiles, axis=(2, 3))  # (num_tiles, T)
 
@@ -204,103 +199,77 @@ def build_datasets():
 
         # Keep tiles with at least one finite NDRE time step
         keep_mask = np.any(np.isfinite(ndre_tile_means), axis=1)
-        X = X[keep_mask]
         ndre_tile_means = ndre_tile_means[keep_mask]
         ndvi_tile_means = ndvi_tile_means[keep_mask]
 
-        if X.size == 0:
+        if ndre_tile_means.size == 0:
             print(f"[prepare_dataset] Year {year}: all tiles dropped due to NaNs in NDRE means.")
             continue
 
         ndre_tile_means = fill_time_nans(ndre_tile_means)
         ndvi_tile_means = fill_time_nans(ndvi_tile_means)
-
-        y = np.nanmin(ndre_tile_means, axis=1)
+        y_min = np.nanmin(ndre_tile_means, axis=1)
 
         if year in TRAIN_YEARS:
-            X_train.append(X)
-            y_train.append(y)
             ndre_ts_train.append(ndre_tile_means)
             ndvi_ts_train.append(ndvi_tile_means)
+            y_min_train.append(y_min)
         else:
-            X_test.append(X)
-            y_test.append(y)
             ndre_ts_test.append(ndre_tile_means)
             ndvi_ts_test.append(ndvi_tile_means)
+            y_min_test.append(y_min)
 
         # Free per-year arrays before next iteration
         del cube, tiles, ndre_tiles, ndvi_tiles, ndre_tile_means, ndvi_tile_means
 
-    if not X_train or not X_test:
+    if not ndre_ts_train or not ndre_ts_test:
         raise RuntimeError("No valid tiles found after masking; check AOI, clouds, or tile_size.")
 
-    X_train = np.concatenate(X_train, axis=0).astype(np.float32)
-    y_train = np.concatenate(y_train, axis=0).astype(np.float32)
-    X_test = np.concatenate(X_test, axis=0).astype(np.float32)
-    y_test = np.concatenate(y_test, axis=0).astype(np.float32)
     ndre_ts_train = np.concatenate(ndre_ts_train, axis=0).astype(np.float32)
     ndre_ts_test = np.concatenate(ndre_ts_test, axis=0).astype(np.float32)
     ndvi_ts_train = np.concatenate(ndvi_ts_train, axis=0).astype(np.float32)
     ndvi_ts_test = np.concatenate(ndvi_ts_test, axis=0).astype(np.float32)
+    y_min_train = np.concatenate(y_min_train, axis=0).astype(np.float32)
+    y_min_test = np.concatenate(y_min_test, axis=0).astype(np.float32)
 
     # Fallback: if test set too small, peel a few samples from train for evaluation
-    if X_test.shape[0] < 5 and X_train.shape[0] > 20:
-        k = min(20, X_train.shape[0] // 5)
-        X_train, X_extra = X_train[:-k], X_train[-k:]
-        y_train, y_extra = y_train[:-k], y_train[-k:]
+    if ndre_ts_test.shape[0] < 5 and ndre_ts_train.shape[0] > 20:
+        k = min(20, ndre_ts_train.shape[0] // 5)
         ndre_ts_train, ndre_ts_extra = ndre_ts_train[:-k], ndre_ts_train[-k:]
         ndvi_ts_train, ndvi_ts_extra = ndvi_ts_train[:-k], ndvi_ts_train[-k:]
+        y_min_train, y_min_extra = y_min_train[:-k], y_min_train[-k:]
 
-        X_test = np.concatenate([X_test, X_extra], axis=0)
-        y_test = np.concatenate([y_test, y_extra], axis=0)
         ndre_ts_test = np.concatenate([ndre_ts_test, ndre_ts_extra], axis=0)
         ndvi_ts_test = np.concatenate([ndvi_ts_test, ndvi_ts_extra], axis=0)
-
-    # Time-series targets for forecasting end-of-season NDRE
-    y_future_train = ndre_ts_train[:, -1]  # last window NDRE mean
-    y_future_test = ndre_ts_test[:, -1]
-    y_future_mean, y_future_std = y_future_train.mean(), y_future_train.std()
-    y_future_train_deficit_score = (y_future_train - y_future_mean) / (y_future_std + 1e-8)
-    y_future_test_deficit_score = (y_future_test - y_future_mean) / (y_future_std + 1e-8)
-    future_deficit_thresh = np.percentile(y_future_train, 25)
-    y_future_train_deficit_label = (y_future_train < future_deficit_thresh).astype(np.int8)
-    y_future_test_deficit_label = (y_future_test < future_deficit_thresh).astype(np.int8)
+        y_min_test = np.concatenate([y_min_test, y_min_extra], axis=0)
 
     # Nitrogen deficiency proxy: NDRE z-score and low-quantile flag (train-driven)
-    y_mean, y_std = y_train.mean(), y_train.std()
-    y_train_deficit_score = (y_train - y_mean) / (y_std + 1e-8)
-    y_test_deficit_score = (y_test - y_mean) / (y_std + 1e-8)
-    deficit_thresh = np.percentile(y_train, 25)  # bottom quartile = likely N-deficient
-    y_train_deficit_label = (y_train < deficit_thresh).astype(np.int8)
-    y_test_deficit_label = (y_test < deficit_thresh).astype(np.int8)
+    y_mean, y_std = y_min_train.mean(), y_min_train.std()
+    y_train_deficit_score = (y_min_train - y_mean) / (y_std + 1e-8)
+    y_test_deficit_score = (y_min_test - y_mean) / (y_std + 1e-8)
+    deficit_thresh = np.percentile(y_min_train, NDRE_DEFICIT_Q)  # bottom quantile = likely N-deficient
+    y_train_deficit_label = (y_min_train < deficit_thresh).astype(np.int8)
+    y_test_deficit_label = (y_min_test < deficit_thresh).astype(np.int8)
 
-    np.save(INTERIM_DIR / "X_train.npy", X_train)
-    np.save(INTERIM_DIR / "y_train.npy", y_train)
-    np.save(INTERIM_DIR / "X_test.npy", X_test)
-    np.save(INTERIM_DIR / "y_test.npy", y_test)
     np.save(INTERIM_DIR / "ndre_ts_train.npy", ndre_ts_train)
     np.save(INTERIM_DIR / "ndre_ts_test.npy", ndre_ts_test)
     np.save(INTERIM_DIR / "ndvi_ts_train.npy", ndvi_ts_train)
     np.save(INTERIM_DIR / "ndvi_ts_test.npy", ndvi_ts_test)
+    np.save(INTERIM_DIR / "y_min_train.npy", y_min_train)
+    np.save(INTERIM_DIR / "y_min_test.npy", y_min_test)
     np.save(INTERIM_DIR / "y_train_deficit_score.npy", y_train_deficit_score)
     np.save(INTERIM_DIR / "y_test_deficit_score.npy", y_test_deficit_score)
     np.save(INTERIM_DIR / "y_train_deficit_label.npy", y_train_deficit_label)
     np.save(INTERIM_DIR / "y_test_deficit_label.npy", y_test_deficit_label)
-    np.save(INTERIM_DIR / "y_future_train.npy", y_future_train)
-    np.save(INTERIM_DIR / "y_future_test.npy", y_future_test)
-    np.save(INTERIM_DIR / "y_future_train_deficit_score.npy", y_future_train_deficit_score)
-    np.save(INTERIM_DIR / "y_future_test_deficit_score.npy", y_future_test_deficit_score)
-    np.save(INTERIM_DIR / "y_future_train_deficit_label.npy", y_future_train_deficit_label)
-    np.save(INTERIM_DIR / "y_future_test_deficit_label.npy", y_future_test_deficit_label)
 
     with open(INTERIM_DIR / "deficit_threshold.txt", "w") as f:
-        f.write(f"train_mean={y_mean}\ntrain_std={y_std}\nq25={deficit_thresh}\n")
-    with open(INTERIM_DIR / "future_deficit_threshold.txt", "w") as f:
-        f.write(f"train_mean={y_future_mean}\ntrain_std={y_future_std}\nq25={future_deficit_thresh}\n")
+        f.write(f"train_mean={y_mean}\ntrain_std={y_std}\nq{NDRE_DEFICIT_Q}={deficit_thresh}\n")
 
     print("Dataset build complete.")
-    print("Train samples:", X_train.shape[0])
-    print("Test samples:", X_test.shape[0])
+    print("Train samples:", ndre_ts_train.shape[0])
+    print("Test samples:", ndre_ts_test.shape[0])
+    print("Train deficit rate:", float(y_train_deficit_label.mean()))
+    print("Test deficit rate:", float(y_test_deficit_label.mean()))
 
 
 if __name__ == "__main__":

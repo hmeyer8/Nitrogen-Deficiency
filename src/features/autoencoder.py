@@ -17,22 +17,24 @@ class DenseAutoencoder(nn.Module):
     - Learns nonlinear manifolds
     - Can model higher-order spectral interactions
     """
-    def __init__(self, input_dim: int, latent_dim: int = 64):
+    def __init__(self, input_dim: int, latent_dim: int = 64, hidden_dims=(512, 256)):
         super().__init__()
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, 512),
-            nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, latent_dim)
-        )
-        self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 512),
-            nn.ReLU(),
-            nn.Linear(512, input_dim)
-        )
+        self.hidden_dims = tuple(hidden_dims)
+        enc_layers = []
+        prev = input_dim
+        for h in self.hidden_dims:
+            enc_layers.extend([nn.Linear(prev, h), nn.ReLU()])
+            prev = h
+        enc_layers.append(nn.Linear(prev, latent_dim))
+        self.encoder = nn.Sequential(*enc_layers)
+
+        dec_layers = []
+        prev = latent_dim
+        for h in reversed(self.hidden_dims):
+            dec_layers.extend([nn.Linear(prev, h), nn.ReLU()])
+            prev = h
+        dec_layers.append(nn.Linear(prev, input_dim))
+        self.decoder = nn.Sequential(*dec_layers)
 
     def forward(self, x):
         z = self.encoder(x)
@@ -43,6 +45,7 @@ def train_autoencoder(
     X_train,
     input_dim,
     latent_dim=64,
+    hidden_dims=(512, 256),
     batch_size=256,
     epochs=50,
     lr=1e-3,
@@ -51,7 +54,7 @@ def train_autoencoder(
     if device is None:
         use_cuda = GPU_ENABLED and torch.cuda.is_available()
         device = "cuda" if use_cuda else "cpu"
-    model = DenseAutoencoder(input_dim=input_dim, latent_dim=latent_dim).to(device)
+    model = DenseAutoencoder(input_dim=input_dim, latent_dim=latent_dim, hidden_dims=hidden_dims).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
 
@@ -113,6 +116,7 @@ def save_autoencoder(model: DenseAutoencoder, path):
             "state_dict": model.state_dict(),
             "input_dim": model.encoder[0].in_features,
             "latent_dim": model.decoder[0].in_features,
+            "hidden_dims": getattr(model, "hidden_dims", (512, 256)),
         },
         path,
     )
@@ -120,9 +124,11 @@ def save_autoencoder(model: DenseAutoencoder, path):
 
 def load_autoencoder(path, device=None) -> DenseAutoencoder:
     checkpoint = torch.load(path, map_location=device or "cpu")
+    hidden_dims = checkpoint.get("hidden_dims", (512, 256))
     model = DenseAutoencoder(
         input_dim=checkpoint["input_dim"],
         latent_dim=checkpoint["latent_dim"],
+        hidden_dims=hidden_dims,
     )
     model.load_state_dict(checkpoint["state_dict"])
     model.to(device or "cpu")

@@ -3,7 +3,7 @@ import numpy as np
 from typing import Optional
 
 try:
-    from catboost import CatBoostRegressor, Pool
+    from catboost import CatBoostRegressor, CatBoostClassifier, Pool
 except ImportError as e:
     raise ImportError("catboost is required for gradient boosting; pip install catboost") from e
 
@@ -74,3 +74,67 @@ def load_catboost_model(path) -> CatBoostRegressor:
     model = CatBoostRegressor()
     model.load_model(path)
     return model
+
+
+def train_catboost_classifier(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_valid: Optional[np.ndarray] = None,
+    y_valid: Optional[np.ndarray] = None,
+    iterations: int = 400,
+    depth: int = 6,
+    learning_rate: float = 0.05,
+    random_seed: int = 0,
+    use_gpu: bool = True,
+    max_bin: int = 64,
+    subsample: Optional[float] = 0.8,
+    rsm: Optional[float] = None,
+    gpu_ram_part: float = 0.6,
+    bootstrap_type: str = "Poisson",
+    bagging_temperature: Optional[float] = None,
+    l2_leaf_reg: float = 3.0,
+):
+    """
+    Train a CatBoost classifier on engineered phenology features.
+    """
+    train_pool = Pool(X_train, y_train)
+    eval_pool = Pool(X_valid, y_valid) if X_valid is not None and y_valid is not None else None
+
+    params = dict(
+        loss_function="Logloss",
+        iterations=iterations,
+        depth=depth,
+        learning_rate=learning_rate,
+        eval_metric="AUC",
+        random_seed=random_seed,
+        verbose=100,
+        max_bin=max_bin,
+        task_type="GPU" if use_gpu else "CPU",
+        bootstrap_type=bootstrap_type,
+        l2_leaf_reg=l2_leaf_reg,
+    )
+
+    if use_gpu:
+        params["devices"] = "0"
+        params["gpu_ram_part"] = gpu_ram_part  # limit VRAM fraction
+    if subsample is not None:
+        params["subsample"] = subsample
+    if rsm is not None:
+        params["rsm"] = rsm
+    if bagging_temperature is not None:
+        params["bagging_temperature"] = bagging_temperature
+    if eval_pool is not None:
+        params["od_type"] = "Iter"
+        params["od_wait"] = 50
+
+    model = CatBoostClassifier(**params)
+    model.fit(train_pool, eval_set=eval_pool, use_best_model=eval_pool is not None)
+    return model
+
+
+def predict_catboost_proba(model: CatBoostClassifier, X: np.ndarray) -> np.ndarray:
+    # Returns probability of the positive class (index 1)
+    proba = model.predict_proba(X)
+    if proba.ndim == 1:
+        return proba
+    return proba[:, 1]
