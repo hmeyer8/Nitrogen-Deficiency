@@ -38,6 +38,7 @@ Env toggles:
 
 ## Hybrid Phenology Math (GitHub-safe sketch)
 We work on standardized 5-step NDRE matrix $X \in \mathbb{R}^{N \times 5}$. Core transforms:
+
 $$
 \begin{aligned}
 X &= U \Sigma V^{\top},\\
@@ -49,6 +50,7 @@ a_i &= \lVert r_i \rVert_2
 $$
 
 Fusion of supervised probability $\hat{p}_i$ with normalized anomalies $\tilde{a}_i, \tilde{b}_i$:
+
 $$
 \text{Risk}_i = \alpha \hat{p}_i + \beta \tilde{a}_i + \gamma \tilde{b}_i
 $$
