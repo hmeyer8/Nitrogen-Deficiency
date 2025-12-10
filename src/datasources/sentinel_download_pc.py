@@ -24,7 +24,7 @@ from src.datasources.cdl_loader import build_stable_crop_mask_from_years
 # Keep memory low: modest chunking and single-worker writes.
 RESOLUTION_METERS = 60
 STORE_WORKERS = int(os.getenv("PC_STORE_WORKERS", "1"))
-CHUNK_SIZE = int(os.getenv("PC_CHUNK_SIZE", "512"))
+CHUNK_SIZE = int(os.getenv("PC_CHUNK_SIZE", "256"))
 STABLE_YEARS = [2019, 2020, 2021, 2022, 2023, 2024]
 ASSETS = ["B02","B03","B04","B05","B06","B07","B08","B8A","B11","B12","SCL"]
 
@@ -134,7 +134,12 @@ def download_pc(
             continue
         h, w, b = arr.shape
         target = memmap[idx, :h, :w, :b]
-        da.store(arr, target, lock=False, compute=True, num_workers=STORE_WORKERS)
+        try:
+            da.store(arr, target, lock=False, compute=True, num_workers=STORE_WORKERS)
+        except Exception as e:
+            if verbose:
+                print(f"Store failed for window {idx+1}: {e}. Filling with NaNs and continuing.")
+            memmap[idx, ...] = np.nan
         del arr, target
         gc.collect()
 
