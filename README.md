@@ -1,13 +1,14 @@
 # Nitrogen Deficiency Feature Learning  
 ### PCA / SVD vs Autoencoders on Stable Nebraska Cropland
 
-This repository implements a **end-to-end machine learning pipeline** to rigorously compare:
+This repository implements a **end-to-end, time-series machine learning pipeline** to rigorously compare:
 
 - **Linear spectral feature extraction** using **PCA / SVD**
 - **Nonlinear representation learning** using **Autoencoders**
 - **Tree-based gradient boosting** using **CatBoost** directly on standardized pixels
+- **Temporal forecasting** using a GRU regressor on intra-season NDRE trajectories
 
-for the task of modeling **nitrogen-related spectral trends in crops** using **Sentinel-2 multispectral satellite imagery** and the **USDA Cropland Data Layer (CDL)**.
+for the task of modeling **nitrogen-related spectral trends in crops** and **forecasting end-of-season deficiency** using **Sentinel-2 multispectral satellite imagery** and the **USDA Cropland Data Layer (CDL)**.
 
 The central scientific question is:
 
@@ -193,8 +194,9 @@ To ensure fairness:
 2. Build datasets: `python -m src.experiments.prepare_dataset` (uses time-series Sentinel stacks downloaded for June/July/August windows)
 3. Train models + save artifacts: `python -m src.experiments.train_pca_ae_catboost`
    - Optional: set `TARGET_MODE=deficit_score` to train/evaluate on the NDRE deficiency z-score instead of raw NDRE.
-4. Optional temporal forecaster (predict end-of-season NDRE from early windows): `python -m src.experiments.train_temporal_forecaster`
-5. Evaluate held-out year: `python -m src.experiments.evaluate_heldout_year`
+4. Temporal forecaster (predict end-of-season NDRE/deficit from early windows): `python -m src.experiments.train_temporal_forecaster`
+5. Evaluate held-out year: `python -m src.experiments.evaluate_heldout_year` (match `TARGET_MODE`)
+6. Optional time-series diagnostics (mean trajectories + derivative outliers): `python -m src.experiments.time_series_diagnostics`
 
 Key artifacts in `data/interim`:
 - `scaler.joblib`, `pca_model.joblib`, `autoencoder.pt`, `catboost_model.cbm`
@@ -222,6 +224,7 @@ See `docs/ignition_protocol.md` for full setup, data download, and validation st
 - Compare model signals against **known N-rate trial plots** when available (e.g., University of Nebraska–Lincoln, Iowa State, Purdue Extension studies on NDRE-based N sufficiency).
 - Use **paired-field controls**: high-vigor reference strips vs. candidate deficiency areas to see if models capture relative N gaps rather than generic health.
 - Track **per-band/region importance** (CatBoost) and **component loadings** (PCA) to confirm reliance on red-edge/NIR bands rather than purely broadband brightness.
+- Inspect **time-series diagnostics**: `ndre_time_series_mean.png` and `ndre_derivative_outliers.json` (first-difference based) to spot abnormal drops/spikes in NDRE over the season.
 
 ---
 

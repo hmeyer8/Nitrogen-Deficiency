@@ -61,6 +61,33 @@ When it helps:
 Limits:
 - Feature importance is less spatially interpretable; very high-dimensional inputs can slow training.
 
+## Temporal GRU Forecaster (Sequence Model)
+
+We fit a GRU-based regressor to forecast end-of-season NDRE (or a deficiency z-score) from early-season NDRE trajectories:
+
+- Inputs: \(X \in \mathbb{R}^{N \times T \times 1}\) with \(T=5\) phenology-aligned windows (e.g., V4–V6, pre-tassel, tassel, early grain fill).
+- Model: single-layer GRU (hidden size 64); take the last hidden state and a linear head to predict \(\hat{y}\).
+- Target: \(y_{\text{future}}\) = mean NDRE in the last window (or its z-score for deficiency).
+- Loss: MSE; inputs/targets are standardized for stable training.
+
+Why it helps:
+- Uses trajectory shape (growth, plateaus, drops) to predict late-season status earlier.
+- Can flag emerging N issues before the final window.
+
+Limits:
+- Needs consistent phenology windows and clean time series; sensitive to missing/NaN spikes.
+- Less interpretable; pair with diagnostics to sanity check trajectories.
+
+## Time-Series Diagnostics (Derivatives and Outliers)
+
+We store NDRE time series per tile (`ndre_ts_train/test.npy`) and provide diagnostics:
+- Mean trajectories: `ndre_time_series_mean.png` to confirm seasonal shape.
+- First-difference outlier report: `ndre_derivative_outliers.json` flags tiles/windows with extreme negative \(\Delta\) NDRE.
+
+How to spot outliers:
+- Compute \(\Delta \text{NDRE}_t = \text{NDRE}_{t+1} - \text{NDRE}_t\).
+- Flag large negative \(\Delta\) (z-score based) to inspect potential stress or data issues.
+
 ## Model Selection Guidance for This Problem
 
 - **Data regime**: tiles are high-dimensional; sample sizes are modest. This favors **CatBoost** (robust tabular booster) and **PCA** (low-variance linear baseline). Autoencoders benefit if many clear tiles are available and GPU training is feasible.

@@ -130,7 +130,7 @@ def load_cdl_year(year: int, aoi=None):
     return data, transform, crs
 
 
-def build_stable_corn_mask_from_years(years, aoi=None):
+def build_stable_crop_mask_from_years(years, crop_class: int, aoi=None):
     cdls = []
 
     for y in years:
@@ -138,11 +138,13 @@ def build_stable_corn_mask_from_years(years, aoi=None):
         cdls.append(data)
 
     cdls = np.stack(cdls, axis=0)
-
     same_crop = np.all(cdls == cdls[0], axis=0)
-    stable_corn_mask = same_crop & (cdls[0] == CORN_CLASS)
+    stable_mask = same_crop & (cdls[0] == crop_class)
+    return stable_mask.astype(np.uint8), transform, crs
 
-    return stable_corn_mask.astype(np.uint8), transform, crs
+
+def build_stable_corn_mask_from_years(years, aoi=None):
+    return build_stable_crop_mask_from_years(years=years, crop_class=CORN_CLASS, aoi=aoi)
 
 
 def main():

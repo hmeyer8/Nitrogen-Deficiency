@@ -7,10 +7,13 @@ from datetime import date
 from pathlib import Path
 
 import numpy as np
+import rasterio
+from pyproj import Transformer
 from sentinelhub import BBox, CRS, MimeType, SentinelHubRequest, bbox_to_dimensions
 
-from src.config import SENTINEL_DIR
+from src.config import SENTINEL_DIR, get_target_crop_code, get_season_windows_for_crop, TARGET_CROP
 from src.datasources.copernicus_client import CDSE_S2_L2A, get_sh_config
+from src.datasources.cdl_loader import build_stable_crop_mask_from_years
 from src.geo.aoi_nebraska import NEBRASKA_BBOX
 
 
@@ -41,24 +44,39 @@ function evaluatePixel(sample) {
 
 RESOLUTION_METERS = 60  # downsample to keep request sizes reasonable
 MAX_TILE_SIZE = 2000    # Sentinel Hub per-request limit is 2500 px; stay under it
-SEASON_WINDOWS = [
-    (6, 1, 6, 30),
-    (7, 1, 7, 31),
-    (8, 1, 8, 31),
-]
 S2_SOURCE = os.getenv("S2_SOURCE", "cdse").lower()  # cdse | pc
+STABLE_YEARS = [2019, 2020, 2021, 2022, 2023, 2024]
 
 
 def download_sentinel_cube(year: int, verbose: bool = False):
     if S2_SOURCE == "pc":
-        return download_sentinel_cube_pc(year=year, verbose=verbose)
+        # Delegate to PC downloader (uses stable crop mask AOI and crop-specific windows)
+        from src.datasources.sentinel_download_pc import download_pc
+        return download_pc(year=year, verbose=verbose)
     return download_sentinel_cube_cdse(year=year, verbose=verbose)
 
 
 def download_sentinel_cube_cdse(year: int, verbose: bool = False):
     config = get_sh_config()
 
-    minx, miny, maxx, maxy = NEBRASKA_BBOX
+    crop_code = get_target_crop_code()
+    stable_mask, mask_transform, mask_crs = build_stable_crop_mask_from_years(
+        years=STABLE_YEARS, crop_class=crop_code, aoi=NEBRASKA_BBOX
+    )
+    rows, cols = np.nonzero(stable_mask)
+    if rows.size == 0:
+        raise RuntimeError("Stable crop mask is empty; cannot define AOI for download.")
+    row_min, row_max = rows.min(), rows.max() + 1
+    col_min, col_max = cols.min(), cols.max() + 1
+    xs = [col_min, col_max]
+    ys = [row_min, row_max]
+    xs_geo, ys_geo = rasterio.transform.xy(mask_transform, ys, xs, offset="ul")
+    xmin_proj, xmax_proj = min(xs_geo), max(xs_geo)
+    ymin_proj, ymax_proj = min(ys_geo), max(ys_geo)
+    transformer = Transformer.from_crs(mask_crs, CRS.WGS84.pyproj_crs(), always_xy=True)
+    minx, miny = transformer.transform(xmin_proj, ymin_proj)
+    maxx, maxy = transformer.transform(xmax_proj, ymax_proj)
+
     bbox_wgs84 = BBox(bbox=(minx, miny, maxx, maxy), crs=CRS.WGS84)
     # Work in a projected CRS so resolution in meters matches the request
     bbox = bbox_wgs84.transform(CRS.POP_WEB)
@@ -67,8 +85,9 @@ def download_sentinel_cube_cdse(year: int, verbose: bool = False):
     tiles_x = math.ceil(full_width / MAX_TILE_SIZE)
     tiles_y = math.ceil(full_height / MAX_TILE_SIZE)
 
+    crop_windows = get_season_windows_for_crop(TARGET_CROP)
     time_windows = [
-        (date(year, m1, d1), date(year, m2, d2)) for (m1, d1, m2, d2) in SEASON_WINDOWS
+        (date(year, m1, d1), date(year, m2, d2)) for (m1, d1, m2, d2) in crop_windows
     ]
 
     if verbose:
@@ -173,8 +192,9 @@ def download_sentinel_cube_pc(year: int, verbose: bool = False):
     import stackstac
     import dask.array as da
 
+    crop_windows = get_season_windows_for_crop(TARGET_CROP)
     time_windows = [
-        (date(year, m1, d1), date(year, m2, d2)) for (m1, d1, m2, d2) in SEASON_WINDOWS
+        (date(year, m1, d1), date(year, m2, d2)) for (m1, d1, m2, d2) in crop_windows
     ]
 
     aoi_geom = box(*NEBRASKA_BBOX).__geo_interface__

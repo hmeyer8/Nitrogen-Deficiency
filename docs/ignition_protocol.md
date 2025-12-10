@@ -203,8 +203,12 @@ print("Missing:", missing)
 
 6. Download Sentinel-2 Data by Year (set `S2_SOURCE=cdse` for Copernicus Data Space, or `S2_SOURCE=pc` for free AWS/Planetary Computer COGs)
 
+Before downloading, set the crop: `TARGET_CROP=corn` (options: corn, soybean, alfalfa, wheat) and ensure CDL is present because the crop mask defines the AOI.
+
 Run each command individually:
 ```
+export TARGET_CROP=corn            # or soybean / alfalfa / wheat
+export S2_SOURCE=cdse              # or pc
 python -m src.datasources.sentinel_download --year 2019 --verbose
 python -m src.datasources.sentinel_download --year 2020 --verbose
 python -m src.datasources.sentinel_download --year 2021 --verbose
@@ -214,7 +218,8 @@ python -m src.datasources.sentinel_download --year 2024 --verbose
 ```
 If you prefer an explicit Planetary Computer pull (bypassing sentinel_download toggle):
 ```
-python -m src.datasources.sentinel_download_pc --year 2019 --verbose
+# set the same TARGET_CROP first
+python -m src.datasources.sentinel_download_pc --year 2019 --verbose   # add --max-items/--relax-* only if needed
 ...
 python -m src.datasources.sentinel_download_pc --year 2024 --verbose
 ```
@@ -222,6 +227,10 @@ python -m src.datasources.sentinel_download_pc --year 2024 --verbose
 Each command must produce a time-series cube with 3 intra-season windows:
 
 data/raw/sentinel/s2_ne_YYYY.npy
+
+Optional cleanup for a fresh run:
+- Remove prior CatBoost logs: `rm -rf catboost_info`
+- Remove prior Sentinel cubes/interim data if re-downloading/rebuilding: `rm -rf data/raw/sentinel data/interim`
 
 Do not proceed until all six years exist.
 
@@ -305,8 +314,14 @@ for name in ["X_train", "y_train", "X_test", "y_test"]:
 ```
 If any shape shows 0 rows, reduce cloud threshold or shrink AOI and rerun prepare_dataset.
 
+Optional: Temporal forecasting model (predict end-of-season NDRE/deficit from early windows)
+```
+# set TARGET_MODE=deficit_score to use the nitrogen-deficit proxy
+python -m src.experiments.train_temporal_forecaster
+```
+
 Phase 4 — Train Feature Models (PCA, Autoencoder, CatBoost)
-8. Train Feature Models
+8. Train Feature Models (use TARGET_MODE=deficit_score for nitrogen focus)
 ```
 python -m src.experiments.train_pca_ae_catboost
 ```
@@ -339,8 +354,15 @@ PY
 ```
 All should be `True`.
 
-Phase 5 — Final Held-Out Evaluation (Most Important Result)
-9. Evaluate Performance on 2024 Only
+Phase 5 — Temporal Forecasting (predict end-of-season NDRE/deficit from early windows)
+9. Train Temporal Forecaster
+```
+# match TARGET_MODE to the signal you want (deficit_score recommended)
+python -m src.experiments.train_temporal_forecaster
+```
+
+Phase 6 — Final Held-Out Evaluation (Most Important Result)
+10. Evaluate Performance on 2024 Only
 ```
 python -m src.experiments.evaluate_heldout_year
 ```
