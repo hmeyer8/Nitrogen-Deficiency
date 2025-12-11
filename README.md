@@ -37,19 +37,23 @@ Env toggles:
 ---
 
 ## Hybrid Phenology Math (GitHub-safe sketch)
-Equations are embedded as local images so they render consistently on GitHub.
-
 We work on standardized 5-step NDRE matrix $X \in \mathbb{R}^{N \times 5}$. Core transforms:
-- Temporal SVD: ![svd](docs/figs/math/svd.png)
-- Scores / reconstruction / residual:
-  - ![score](docs/figs/math/score.png)
-  - ![xhat](docs/figs/math/xhat.png)
-  - ![resid](docs/figs/math/resid.png)
-  - ![anom](docs/figs/math/anom.png)
+
+$$
+\begin{aligned}
+X &= U \Sigma V^{\top},\\
+s_i &= x_i V_k,\\
+\hat{x}_i &= s_i V_k^{\top},\\
+r_i &= x_i - \hat{x}_i,\\
+a_i &= \lVert r_i \rVert_2
+\end{aligned}
+$$
 
 Fusion of supervised probability $\hat{p}_i$ with normalized anomalies $\tilde{a}_i, \tilde{b}_i$:
 
-![risk](docs/figs/math/risk.png)
+$$
+\text{Risk}_i = \alpha \hat{p}_i + \beta \tilde{a}_i + \gamma \tilde{b}_i
+$$
 
 Full derivation and interpretations: `docs/hybrid_temporal_svd_math.md`.
 
