@@ -44,11 +44,11 @@ Goal: use labels (healthy vs deficient) to learn decision rules on the SVD signa
 - Features per field:
 
 $$
-\text{feat}_i = [\, s_{i,1}, \ldots, s_{i,k},\, a_i,\, \text{mean}(r_i),\, \max |r_i|,\, \text{early\_mean}(r_i),\, \text{late\_mean}(r_i) \,]
+\text{feat}_i = \big[\, s_{i,1}, \ldots, s_{i,k},\, a_i,\, \text{mean}(r_i),\, \|r_i\|_\infty,\, \text{early-mean}(r_i),\, \text{late-mean}(r_i) \,\big]
 $$
 
-  - early_mean: average of the first time steps (t1-t2)
-  - late_mean: average of the last time steps (t4-t5)
+  - `early_mean`: average of the first time steps (t1-t2)
+  - `late_mean`: average of the last time steps (t4-t5)
 
 - Train a CatBoost classifier:
 
