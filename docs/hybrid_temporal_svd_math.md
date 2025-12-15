@@ -81,11 +81,11 @@ $$
 - AE anomaly score (how “unhealthy” the stacked channels look):
 
 $$
-b_i = \|u_i - \tilde{u}_i\|_2
+b_i = \|u_i - \tilde{u}_i\|_2^2
 $$
 
 Interpretation:
-- If a field’s stacked channels cannot be reconstructed well by a model trained on healthy fields, it likely deviates from normal phenology (stress, including nitrogen).
+- If a field’s stacked channels cannot be reconstructed well by a model trained on healthy fields, it likely deviates from normal phenology (stress, including nitrogen). (In code we use squared error; any monotone variant works as an anomaly score.)
 
 ## 4) Fusion: one nitrogen risk score
 Normalize the two unsupervised signals using train min-max (so they live on the same 0–1 scale as probabilities):

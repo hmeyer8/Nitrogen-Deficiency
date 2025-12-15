@@ -189,7 +189,8 @@ def run():
     hybrid_val = alpha * cb_val_prob + beta * res_norm_val_norm + gamma * ae_val_norm
     hybrid_test = alpha * cb_test_prob + beta * res_norm_test_norm + gamma * ae_test_norm
 
-    tau, best_f1_train = _best_f1_threshold(y_train, hybrid_train)
+    # Choose threshold on validation (protocol: tune on val, report once on test)
+    tau, best_f1_val = _best_f1_threshold(y_val, hybrid_val)
     hybrid_train_pred = (hybrid_train > tau).astype(np.int8)
     hybrid_val_pred = (hybrid_val > tau).astype(np.int8)
     hybrid_test_pred = (hybrid_test > tau).astype(np.int8)
@@ -226,7 +227,9 @@ def run():
             "f1_at_tau_val": _safe_metric(f1_score, y_val, hybrid_val_pred),
             "f1_at_tau_test": _safe_metric(f1_score, y_test, hybrid_test_pred),
             "tau": tau,
-            "train_f1_at_tau": best_f1_train,
+            "tau_source": "val",
+            "val_f1_opt": best_f1_val,
+            "train_f1_at_tau": _safe_metric(f1_score, y_train, hybrid_train_pred),
         },
     }
 

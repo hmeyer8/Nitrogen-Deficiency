@@ -71,7 +71,7 @@ def transform_with_svd(
         x_hat: (N, T) low-rank reconstruction (standardized space)
         residuals: (N, T)
         residual_norm: (N,)
-        feature_vector: (N, k + 4) concatenated features for CatBoost
+        feature_vector: (N, k + 5) concatenated features for CatBoost
         stacked_channels: (N, 3T) = [x, x_hat, residual]
     """
     X_std, _, _ = _standardize_columns(X, mean=svd_fit.mean, std=svd_fit.std)

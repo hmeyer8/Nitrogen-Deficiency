@@ -1,0 +1,159 @@
+\documentclass{article}
+\usepackage{amsmath,amsfonts,amssymb}
+
+% Render repo paths and identifiers without escaping underscores, braces, etc.
+\newcommand{\repo}[1]{\texttt{\detokenize{#1}}}
+
+\begin{document}
+
+\section{Math and Rationale}
+
+\subsection{High-level idea}
+Each field (or tile) provides a 5-point NDRE trajectory across phenology windows, which we treat as a point in $\mathbb{R}^5$.
+Most healthy fields lie near a low-dimensional \emph{linear subspace} that captures the dominant temporal shapes.
+We (i) learn that subspace with a truncated SVD, (ii) use the resulting coordinates and deviations as features for a supervised CatBoost classifier, (iii) train a healthy-only autoencoder to produce an unsupervised anomaly score, and (iv) fuse these signals into a single risk score.
+
+\paragraph{Repo implementation.}
+The end-to-end pipeline is executed by \repo{src/experiments/train_temporal_hybrid.py} (entrypoint \repo{run()}).
+
+\subsection{Data and preprocessing}
+Let $T=5$ be the number of phenology windows.
+For split $S \in \{\mathrm{tr},\mathrm{val},\mathrm{test}\}$, stack the NDRE sequences into
+$X^{(S)} \in \mathbb{R}^{N_S \times T}$ where row $x_i^{(S)} \in \mathbb{R}^T$ is field $i$'s trajectory.
+To prevent leakage, compute per-window mean/scale on training only:
+\[
+\mu_t=\frac{1}{N_{\mathrm{tr}}}\sum_{i\in \mathrm{tr}} X_{it}^{(\mathrm{tr})},
+\qquad
+s_t=\sqrt{\frac{1}{N_{\mathrm{tr}}}\sum_{i\in \mathrm{tr}}\bigl(X_{it}^{(\mathrm{tr})}-\mu_t\bigr)^2},
+\]
+then standardize every split by
+\[
+\tilde X^{(S)}_{it}=\frac{X^{(S)}_{it}-\mu_t}{s_t+\varepsilon},
+\]
+with a small $\varepsilon>0$ (and, in implementation, a safety rule if $s_t$ is numerically near zero).
+Let $\tilde x_i$ denote a standardized row vector.
+
+\paragraph{Repo implementation.}
+\begin{itemize}
+\item The 5 phenology windows (so $T=5$) are defined in \repo{src/config.py} (\repo{get_season_windows_for_crop}).
+\item Sentinel-2 window mosaics are built by \repo{src/datasources/sentinel_download.py} or \repo{src/datasources/sentinel_download_pc.py}.
+\item The NDRE time-series matrices \repo{ndre_ts_train.npy}, \repo{ndre_ts_val.npy}, \repo{ndre_ts_test.npy} are written by \repo{src/experiments/prepare_dataset.py} (\repo{build_datasets}).
+\item Column standardization (train mean/std reused for val/test) is implemented in \repo{src/features/temporal_svd.py} (\repo{_standardize_columns}).
+\end{itemize}
+
+\subsection{Temporal SVD (phenology backbone)}
+Compute the SVD of the standardized \emph{training} matrix:
+\[
+\tilde X^{(\mathrm{tr})} = U \Sigma V^\top,
+\qquad
+U\in\mathbb{R}^{N_{\mathrm{tr}}\times T},\ \Sigma\in\mathbb{R}^{T\times T},\ V\in\mathbb{R}^{T\times T}.
+\]
+Let $\sigma_1 \ge \cdots \ge \sigma_T \ge 0$ be the singular values (diagonal of $\Sigma$), and choose the smallest $k\le T$ such that
+\[
+\frac{\sum_{j=1}^k \sigma_j^2}{\sum_{j=1}^T \sigma_j^2} \ge 0.95.
+\]
+Write $V_k\in\mathbb{R}^{T\times k}$ for the first $k$ columns of $V$ and $P_k = V_k V_k^\top$ for the orthogonal projector onto their span.
+For each field $i$ we define
+\[
+s_i = \tilde x_i V_k\in\mathbb{R}^k,
+\qquad
+\hat x_i = s_i V_k^\top = \tilde x_i P_k,
+\qquad
+r_i = \tilde x_i - \hat x_i = \tilde x_i(I-P_k),
+\qquad
+a_i=\|r_i\|_2.
+\]
+\emph{Why SVD is principled.} By the Eckart--Young--Mirsky theorem,
+\[
+\hat X = \tilde X^{(\mathrm{tr})} P_k = U_k \Sigma_k V_k^\top
+\in \arg\min_{\mathrm{rank}(Y)\le k}\|\tilde X^{(\mathrm{tr})}-Y\|_F,
+\]
+(unique when $\sigma_k>\sigma_{k+1}$). Moreover $r_i$ is orthogonal to the learned subspace ($r_i V_k = 0$), so $a_i$ is exactly the Euclidean distance from $\tilde x_i$ to that subspace.
+
+\paragraph{Repo implementation.}
+\begin{itemize}
+\item SVD fit and rank selection are in \repo{src/features/temporal_svd.py} (\repo{fit_temporal_svd}, \repo{_choose_rank}).
+\item Projection, reconstruction, residuals, and $[s_i, a_i, \ldots]$ feature construction are in \repo{src/features/temporal_svd.py} (\repo{transform_with_svd}).
+\item The training/validation/test orchestration that calls these functions is in \repo{src/experiments/train_temporal_hybrid.py}.
+\end{itemize}
+
+\subsection{Supervised head (CatBoost)}
+We combine ``where the field lies on the phenology subspace'' ($s_i$) with ``how far it deviates'' (statistics of $r_i$) to form a tabular feature vector:
+\[
+\phi_i=\Big[s_i,\ a_i,\ \mathrm{mean}(r_i),\ \|r_i\|_\infty,\ \mathrm{earlyMean}(r_i),\ \mathrm{lateMean}(r_i)\Big]\in\mathbb{R}^{k+5},
+\]
+where $\mathrm{earlyMean}$ averages windows $t=1,2$ and $\mathrm{lateMean}$ averages $t=4,5$.
+CatBoost learns a function $f:\mathbb{R}^{k+5}\to\mathbb{R}$ (log-odds) and outputs a probability
+\[
+p_i=\sigma\!\big(f(\phi_i)\big),
+\qquad
+\sigma(z)=\frac{1}{1+e^{-z}},
+\]
+by (approximately) minimizing empirical log-loss on training examples with labels $y_i\in\{0,1\}$:
+\[
+\min_f\ \sum_{i\in\mathrm{tr}}\Big(\log(1+e^{f(\phi_i)}) - y_i f(\phi_i)\Big).
+\]
+\emph{Why CatBoost.} Gradient-boosted trees model nonlinear interactions among timing/shape features with strong performance on tabular data; log-loss is a proper scoring rule, so probability calibration can be evaluated and improved if needed.
+
+\paragraph{Repo implementation.}
+\begin{itemize}
+\item Labels $y_i$ (deficit proxy from a train-driven NDRE-min quantile threshold) are created in \repo{src/experiments/prepare_dataset.py}.
+\item CatBoost training and probability output live in \repo{src/features/catboost_model.py} (\repo{train_catboost_classifier}, \repo{predict_catboost_proba}).
+\item The CatBoost branch is executed in \repo{src/experiments/train_temporal_hybrid.py}.
+\end{itemize}
+
+\subsection{Unsupervised head (autoencoder)}
+To add a label-free ``does this look like a healthy trajectory?'' signal, we stack observed, expected, and residual channels:
+\[
+u_i = [\,\tilde x_i,\ \hat x_i,\ r_i\,] \in \mathbb{R}^{3T} = \mathbb{R}^{15}.
+\]
+Train an autoencoder on healthy training examples $H=\{i\in\mathrm{tr}:y_i=0\}$ with encoder $f_\theta$ and decoder $g_\phi$:
+\[
+\min_{\theta,\phi} \sum_{i\in H}\|u_i - g_\phi(f_\theta(u_i))\|_2^2.
+\]
+Define the anomaly score as the squared reconstruction error
+\[
+b_i = \|u_i - \tilde u_i\|_2^2,
+\qquad
+\tilde u_i = g_\phi(f_\theta(u_i)).
+\]
+Under an isotropic Gaussian noise model around a learned ``healthy'' manifold, $b_i$ is proportional to a negative log-likelihood, so large $b_i$ indicates trajectories atypical of the healthy set.
+
+\paragraph{Repo implementation.}
+\begin{itemize}
+\item The autoencoder model and training loop are in \repo{src/features/autoencoder.py} (\repo{DenseAutoencoder}, \repo{train_autoencoder}, \repo{reconstruct_with_autoencoder}).
+\item The stacked channels $u_i=[\tilde x_i,\hat x_i,r_i]$ are constructed in \repo{src/features/temporal_svd.py} (\repo{transform_with_svd}, key \repo{stacked_channels}) and consumed in \repo{src/experiments/train_temporal_hybrid.py}.
+\item Healthy-only training selection ($H=\{y_i=0\}$) and the anomaly score $b_i$ are computed in \repo{src/experiments/train_temporal_hybrid.py}.
+\end{itemize}
+
+\subsection{Fusion and decision}
+Because $a_i$ and $b_i$ are not probabilities, we scale them using training-set min--max (then reuse the same scaling for validation/test):
+\[
+\tilde a_i=\frac{a_i-a_{\min}}{a_{\max}-a_{\min}+\varepsilon},
+\qquad
+\tilde b_i=\frac{b_i-b_{\min}}{b_{\max}-b_{\min}+\varepsilon}.
+\]
+Fuse the three signals into one risk score:
+\[
+\mathrm{Risk}_i = \alpha p_i + \beta \tilde a_i + \gamma \tilde b_i,
+\qquad
+\alpha=0.5,\ \beta=\gamma=0.25.
+\]
+Choose a decision threshold $\tau$ on the validation split by maximizing the F1 score (no test leakage), then flag deficiency when $\mathrm{Risk}_i>\tau$.
+
+\paragraph{Repo implementation.}
+\begin{itemize}
+\item Train min--max scaling, fusion weights, and $\mathrm{Risk}_i$ are computed in \repo{src/experiments/train_temporal_hybrid.py} (\repo{_min_max_scale} and the fusion block).
+\item Default fusion weights can be overridden via env vars \repo{RISK_ALPHA}, \repo{RISK_BETA}, \repo{RISK_GAMMA} (read in \repo{src/experiments/train_temporal_hybrid.py}).
+\item Threshold selection $\tau$ (by best validation F1) is in \repo{src/experiments/train_temporal_hybrid.py} (\repo{_best_f1_threshold}).
+\end{itemize}
+
+\paragraph{Interpretability and guarantees.}
+\begin{itemize}
+\item \textbf{SVD:} truncated SVD gives a Frobenius-optimal rank-$k$ approximation; $a_i$ is distance to the learned phenology subspace and $r_i$ is orthogonal to it.
+\item \textbf{CatBoost:} learns nonlinear rules on interpretable inputs ($s_i$ and residual summaries); trained by log-loss (Bernoulli negative log-likelihood).
+\item \textbf{Autoencoder:} trained on healthy-only data to reconstruct typical stacked signals; squared reconstruction error is a principled anomaly score under a Gaussian noise assumption.
+\item \textbf{Fusion:} linear combination after common scaling prevents domination by raw units; selecting $\tau$ on validation preserves test integrity.
+\end{itemize}
+
+\end{document}
