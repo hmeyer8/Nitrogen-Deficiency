@@ -55,7 +55,7 @@ $$
 \text{Risk}_i = \alpha \hat{p}_i + \beta \tilde{a}_i + \gamma \tilde{b}_i
 $$
 
-Full derivation and interpretations: `docs/hybrid_temporal_svd_math.md`.
+Full derivation and interpretations: `docs/hybrid_temporal_svd_math.md` (LaTeX: `docs/math_and_rationale.tex`).
 
 ---
 
@@ -87,19 +87,27 @@ Supported CLI workflows:
 ## Repository Structure
 
 ```text
-Nitrogen-Deficiency/
+nitrogen-features/
 ├── README.md
+├── .env.example
 ├── requirements.txt
+├── notebooks/
+├── figs/
 ├── src/
 │   ├── config.py
 │   ├── datasources/
+│   │   ├── cdl_loader.py
+│   │   ├── copernicus_client.py
+│   │   ├── sentinel_download.py
 │   │   └── sentinel_download_pc.py
 │   ├── geo/
 │   ├── features/
 │   │   ├── indices.py
 │   │   ├── autoencoder.py
 │   │   ├── catboost_model.py
+│   │   ├── pca_svd.py
 │   │   └── temporal_svd.py
+│   └── utils/
 │   └── experiments/
 │       ├── prepare_dataset.py
 │       ├── train_temporal_hybrid.py
@@ -107,8 +115,11 @@ Nitrogen-Deficiency/
 │       └── time_series_diagnostics.py
 ├── data/
 │   ├── raw/
+│   ├── features/
 │   └── interim/
 └── docs/
+    ├── eval_protocol.md
     ├── ignition_protocol.md
-    └── hybrid_temporal_svd_math.md
+    ├── hybrid_temporal_svd_math.md
+    └── math_and_rationale.tex
 ```

@@ -2,6 +2,8 @@
 
 This note explains the hybrid phenology model in plain linear-algebra terms, with enough words around the symbols that a non-specialist can follow. It shows how 5-step NDRE time series are decomposed with SVD, how residuals highlight stress, how we turn those signals into supervised and unsupervised detectors, and how we fuse them into one nitrogen-risk score.
 
+For the LaTeX version of this writeup, see `docs/math_and_rationale.tex`.
+
 ## Data: 5-step NDRE time series
 - Each field/tile has NDRE at 5 phenology windows (rows are fields, columns are time steps).
 - Build a matrix $X \in \mathbb{R}^{N \times 5}$; row $\mathbf{x}_i$ is the 5-step series for field $i$.

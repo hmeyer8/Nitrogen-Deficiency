@@ -4,13 +4,13 @@ This guide shows how to set up locally, download data, build the time-series dat
 
 Phase 1 - Local Project Setup (one-time)
 1) Navigate to repo:
-   - macOS/Linux: `cd ~/Nitrogen-Deficiency`
-   - Windows PowerShell: `Set-Location ~/Nitrogen-Deficiency`
+   - macOS/Linux: `cd ~/nitrogen-features`
+   - Windows PowerShell: `Set-Location ~/nitrogen-features`
 2) Create + activate venv:
    - macOS/Linux: `python3 -m venv .venv && source .venv/bin/activate`
    - Windows: `python -m venv .venv; .\.venv\Scripts\Activate.ps1`
 3) Install deps: `python -m pip install --upgrade pip && python -m pip install -r requirements.txt`
-4) Create `.env` with Copernicus creds:
+4) Create `.env` with Copernicus creds (start from `.env.example` if available):
    ```
    CDSE_CLIENT_ID=your_real_client_id
    CDSE_CLIENT_SECRET=your_real_client_secret
@@ -27,7 +27,7 @@ Phase 2 - Download Raw Data
    python -m src.datasources.cdl_loader --years 2019 2020 2021 2022 2023 2024
    ```
    Verify all tif files exist in `data/raw/cdl/`.
-2) Sentinel-2 L2A mosaics (3 phenology windows/year, NE AOI):
+2) Sentinel-2 L2A mosaics (5 phenology windows/year, NE AOI):
    - Set crop (defines AOI via CDL): `TARGET_CROP=corn`
    - Choose source:
      - `S2_SOURCE=cdse` (default Copernicus Data Space via sentinelhub)
@@ -46,10 +46,10 @@ Phase 3 - Build Time-Series Datasets (stable corn only)
 python -m src.experiments.prepare_dataset
 ```
 Outputs in `data/interim/`:
-- ndre_ts_train.npy / ndre_ts_test.npy (N x 5 NDRE series)
-- ndvi_ts_train.npy / ndvi_ts_test.npy
-- y_min_train.npy / y_min_test.npy (NDRE minima)
-- y_train_deficit_label.npy / y_test_deficit_label.npy (bottom-quantile flags)
+- ndre_ts_train.npy / ndre_ts_val.npy / ndre_ts_test.npy (N x 5 NDRE series)
+- ndvi_ts_train.npy / ndvi_ts_val.npy / ndvi_ts_test.npy
+- y_min_train.npy / y_min_val.npy / y_min_test.npy (NDRE minima)
+- y_train_deficit_label.npy / y_val_deficit_label.npy / y_test_deficit_label.npy (bottom-quantile flags)
 - y_train_deficit_score.npy / y_test_deficit_score.npy (z-scores)
 - deficit_threshold.txt, tile_coords.npy, tile_hash.txt
 Quick check:
@@ -57,7 +57,14 @@ Quick check:
 python - <<'PY'
 import numpy as np
 from src.config import INTERIM_DIR
-for name in ["ndre_ts_train","ndre_ts_test","y_train_deficit_label","y_test_deficit_label"]:
+for name in [
+    "ndre_ts_train",
+    "ndre_ts_val",
+    "ndre_ts_test",
+    "y_train_deficit_label",
+    "y_val_deficit_label",
+    "y_test_deficit_label",
+]:
     arr = np.load(INTERIM_DIR / f"{name}.npy")
     print(name, arr.shape)
 PY
@@ -90,6 +97,7 @@ Phase 6 - Visual Verification (recommended)
    - notebooks/01_explore_cdl.ipynb
    - notebooks/02_sample_tiles.ipynb
    - notebooks/03_feature_visualization.ipynb (SVD loadings, CatBoost importance, AE recon error)
+   - notebooks/04_feature_graph.ipynb
 3) PYTHONPATH if imports fail:
    - `export PYTHONPATH=$PWD && jupyter lab`
    - or prepend in notebook: `import sys, pathlib; sys.path.append(str(pathlib.Path.cwd()))`
